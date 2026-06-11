@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<title>WEN — Simulação</title>
+
+<!-- PWA / iPhone -->
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="WEN Sim"/>
+<meta name="theme-color" content="#14532d"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+
+<!-- Ícone para iPhone (usamos SVG inline via data URI) -->
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2314532d'/><text y='68' x='50' text-anchor='middle' font-size='58'>🧮</text></svg>"/>
+
+<!-- Manifest inline via JS (sem arquivo separado) -->
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22WEN%20Simula%C3%A7%C3%A3o%22%2C%22short_name%22%3A%22WEN%20Sim%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23f0fdf4%22%2C%22theme_color%22%3A%22%2314532d%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22data%3Aimage%2Fsvg%2Bxml%2C%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%20100%20100'%3E%3Crect%20width%3D'100'%20height%3D'100'%20rx%3D'22'%20fill%3D'%2314532d'%2F%3E%3Ctext%20y%3D'68'%20x%3D'50'%20text-anchor%3D'middle'%20font-size%3D'58'%3E%F0%9F%A7%AE%3C%2Ftext%3E%3C%2Fsvg%3E%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fsvg%2Bxml%22%7D%5D%7D"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif;-webkit-tap-highlight-color:transparent}
+:root{
+  --verde:#16a34a;--verde-dark:#14532d;--verde-light:#f0fdf4;
+  --azul:#1e40af;--azul-dark:#1e3a8a;
+  --roxo:#5b21b6;--roxo-dark:#4c1d95;
+  --vermelho:#dc2626;--laranja:#f97316;
+  --cinza-50:#f8fafc;--cinza-100:#f1f5f9;--cinza-200:#e5e7eb;
+  --cinza-400:#9ca3af;--cinza-600:#6b7280;--cinza-800:#1e293b;
+}
+body{background:#f0fdf4;color:var(--cinza-800);min-height:100vh;min-height:-webkit-fill-available}
+html{height:-webkit-fill-available}
+
+/* HEADER */
+.header{background:linear-gradient(135deg,var(--verde-dark),var(--verde));color:white;padding:calc(18px + env(safe-area-inset-top)) 28px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;box-shadow:0 2px 12px rgba(0,0,0,.15)}
+.header-brand{display:flex;align-items:center;gap:12px}
+.header-brand .logo{width:40px;height:40px;background:rgba(255,255,255,.2);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.2rem}
+.header-brand h1{font-size:1.1rem;font-weight:800;line-height:1.2}
+.header-brand p{font-size:.75rem;opacity:.7;margin-top:2px}
+.header-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.btn-header{border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.12);color:white;border-radius:9px;padding:7px 16px;font-size:.82rem;font-weight:600;cursor:pointer;transition:background .2s}
+.btn-header:hover{background:rgba(255,255,255,.25)}
+.btn-header.primary{background:white;color:var(--verde-dark)}
+.btn-header.primary:hover{background:#f0fdf4}
+.sync-chip{font-size:.75rem;padding:4px 10px;border-radius:20px;background:rgba(255,255,255,.15);font-weight:600;display:flex;align-items:center;gap:5px}
+
+/* CONTAINER */
+.container{max-width:960px;margin:0 auto;padding:24px max(16px,env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+
+/* SALDOS CARD */
+.saldos-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:24px}
+@media(max-width:640px){.saldos-grid{grid-template-columns:1fr}}
+.saldo-card{border-radius:16px;padding:22px 24px;color:white;position:relative;overflow:hidden}
+.saldo-card::before{content:'';position:absolute;top:-20px;right:-20px;width:100px;height:100px;border-radius:50%;background:rgba(255,255,255,.06)}
+.saldo-card .sc-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.12em;font-weight:700;opacity:.75;margin-bottom:8px}
+.saldo-card .sc-valor{font-size:1.65rem;font-weight:900;line-height:1;margin-bottom:6px}
+.saldo-card .sc-sub{font-size:.74rem;opacity:.55;margin-bottom:14px}
+.saldo-card .sc-btn{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);color:white;border-radius:8px;padding:5px 14px;font-size:.76rem;font-weight:600;cursor:pointer;transition:background .2s}
+.saldo-card .sc-btn:hover{background:rgba(255,255,255,.28)}
+.card-banco{background:linear-gradient(135deg,#1e3a8a,#2563eb)}
+.card-caixa{background:linear-gradient(135deg,#14532d,#16a34a)}
+.card-total{background:linear-gradient(135deg,#4c1d95,#6d28d9)}
+
+/* ALERTA */
+.alerta{border-radius:12px;padding:14px 18px;margin-bottom:20px;display:flex;gap:12px;align-items:flex-start}
+.alerta.danger{background:#fef2f2;border:1px solid #fecaca}
+.alerta.success{background:#f0fdf4;border:1px solid #bbf7d0}
+.alerta-icon{font-size:1.3rem;flex-shrink:0;margin-top:1px}
+.alerta-titulo{font-weight:700;font-size:.9rem;margin-bottom:3px}
+.alerta.danger .alerta-titulo{color:#dc2626}
+.alerta.success .alerta-titulo{color:#166534}
+.alerta-sub{font-size:.82rem;color:var(--cinza-600)}
+
+/* KPIs */
+.kpis-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+@media(max-width:640px){.kpis-grid{grid-template-columns:repeat(2,1fr)}}
+.kpi-card{background:white;border-radius:12px;padding:14px 16px;border:1px solid var(--cinza-200)}
+.kpi-card.pos{border-bottom:3px solid #22c55e}
+.kpi-card.neg{border-bottom:3px solid #ef4444}
+.kpi-label{font-size:.67rem;text-transform:uppercase;color:var(--cinza-600);font-weight:600;letter-spacing:.07em;margin-bottom:7px}
+.kpi-valor{font-size:1.1rem;font-weight:800}
+.kpi-valor.pos{color:#16a34a}
+.kpi-valor.neg{color:#dc2626}
+.kpi-data{font-size:.71rem;color:var(--cinza-400);margin-top:3px}
+
+/* SEÇÃO */
+.secao{background:white;border-radius:14px;border:1px solid var(--cinza-200);overflow:hidden;margin-bottom:18px}
+.secao-header{padding:14px 20px;background:var(--cinza-50);border-bottom:1px solid var(--cinza-200);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.secao-titulo{font-size:.88rem;font-weight:700;color:#374151}
+.secao-sub{font-size:.75rem;color:var(--cinza-400);margin-top:2px}
+.secao-body{padding:0}
+
+/* GRAFICO */
+.grafico-wrap{background:white;border-radius:14px;padding:18px 20px;border:1px solid var(--cinza-200);margin-bottom:18px}
+.grafico-titulo{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--cinza-600);font-weight:600;margin-bottom:16px}
+
+/* MANUAIS */
+.manual-item{display:flex;justify-content:space-between;align-items:center;padding:11px 20px;border-bottom:1px solid #f1f5f9}
+.manual-item:last-child{border-bottom:none}
+.manual-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0}
+.manual-icon.entrada{background:#dcfce7}
+.manual-icon.saida{background:#fee2e2}
+.manual-info{flex:1;margin-left:10px}
+.manual-nome{font-size:.85rem;font-weight:600;color:#374151}
+.manual-data{font-size:.73rem;color:var(--cinza-400);margin-top:2px}
+.manual-valor{font-size:.95rem;font-weight:700}
+.manual-valor.entrada{color:#16a34a}
+.manual-valor.saida{color:#dc2626}
+.manual-del{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:6px;padding:4px 9px;font-size:.75rem;cursor:pointer;margin-left:10px}
+.empty-state{padding:24px;text-align:center;color:var(--cinza-400);font-size:.82rem}
+
+/* TIMELINE */
+.tl-marco{padding:7px 20px;background:var(--cinza-50);border-bottom:1px solid #f1f5f9;display:flex;justify-content:space-between}
+.tl-marco span{font-size:.75rem;color:var(--cinza-400);font-style:italic}
+.tl-dia{border-bottom:1px solid #f1f5f9}
+.tl-dia-header{padding:11px 20px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none}
+.tl-dia-header:hover{background:#f9fafb}
+.tl-dia-hoje{background:#fefce8}
+.tl-dia-nome{font-size:.85rem;font-weight:700;color:#374151}
+.tl-dia-nome.hoje{color:#854d0e}
+.tl-badges{display:flex;gap:4px;margin-top:2px}
+.tl-badge{font-size:.7rem;padding:2px 7px;border-radius:99px;font-weight:600}
+.tl-badge.rec{background:#dcfce7;color:#166534}
+.tl-badge.pag{background:#fee2e2;color:#dc2626}
+.tl-badge.man{background:#e0e7ff;color:#4338ca}
+.tl-saldo{text-align:right}
+.tl-saldo-label{font-size:.7rem;color:var(--cinza-400)}
+.tl-saldo-valor{font-size:.95rem;font-weight:800}
+.tl-saldo-valor.pos{color:#16a34a}
+.tl-saldo-valor.neg{color:#dc2626}
+.tl-detalhe{display:none;flex-direction:column;gap:4px;padding:0 20px 12px}
+.tl-item{display:flex;justify-content:space-between;padding:6px 10px;border-radius:8px;font-size:.82rem}
+.tl-item.rec{background:#f0fdf4}
+.tl-item.pag{background:#fef2f2}
+.tl-item.man{background:#e0e7ff}
+.tl-item-label{color:#374151}
+.tl-item-valor{font-weight:700}
+.tl-item.rec .tl-item-valor{color:#16a34a}
+.tl-item.pag .tl-item-valor{color:#dc2626}
+.tl-item.man .tl-item-valor{color:#4338ca}
+.tl-scroll{max-height:520px;overflow-y:auto}
+.badge-atrasado{background:#fef3c7;color:#92400e;font-size:.68rem;padding:1px 6px;border-radius:99px;margin-left:5px;font-weight:700}
+
+/* MODAL */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:white;border-radius:16px;width:100%;max-width:420px;padding:28px;margin:16px;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal h2{font-size:1rem;font-weight:700;color:var(--cinza-800);margin-bottom:20px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:.82rem;font-weight:600;color:var(--cinza-600);margin-bottom:5px}
+.form-group input,.form-group select{width:100%;border:1px solid var(--cinza-200);border-radius:8px;padding:9px 12px;font-size:.9rem;outline:none}
+.form-group input:focus,.form-group select:focus{border-color:var(--verde)}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+.btn-cancel{background:white;color:var(--cinza-600);border:1px solid var(--cinza-200);border-radius:8px;padding:9px 18px;font-size:.88rem;font-weight:600;cursor:pointer}
+.btn-save{background:var(--verde);color:white;border:none;border-radius:8px;padding:9px 18px;font-size:.88rem;font-weight:600;cursor:pointer}
+.btn-save:hover{background:var(--verde-dark)}
+
+/* TOAST */
+.toast{position:fixed;bottom:24px;right:24px;background:#16a34a;color:white;padding:12px 20px;border-radius:10px;font-size:.88rem;font-weight:600;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+
+/* LOADING */
+.loading{display:flex;align-items:center;gap:10px;padding:20px;color:var(--cinza-600);font-size:.88rem}
+.spinner{width:20px;height:20px;border:3px solid #d1fae5;border-top-color:#16a34a;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* STATS BAR */
+.stats-bar{display:flex;gap:20px;flex-wrap:wrap;padding:12px 20px;background:rgba(255,255,255,.08);border-radius:10px;margin-top:10px}
+.stats-bar .stat{text-align:center}
+.stats-bar .stat-val{font-size:.9rem;font-weight:800;color:white}
+.stats-bar .stat-lbl{font-size:.65rem;opacity:.6;text-transform:uppercase;letter-spacing:.06em}
+
+@media(max-width:480px){
+  .container{padding:14px 10px 32px}
+  .saldo-card{padding:16px}
+  .saldo-card .sc-valor{font-size:1.35rem}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-brand">
+    <div class="logo">🧮</div>
+    <div>
+      <h1>Simulação Financeira</h1>
+      <p>WEN Produtora · Projeção 60 dias</p>
+    </div>
+  </div>
+  <div class="header-actions">
+    <span class="sync-chip" id="syncChip">⏳ Carregando...</span>
+    <button class="btn-header" onclick="atualizarDoFirebase()">🔄 Atualizar Dados</button>
+    <button class="btn-header primary" onclick="abrirModalSaldo()">⚙️ Configurar Saldos</button>
+  </div>
+</div>
+
+<div class="container">
+  <div id="mainContent">
+    <div class="loading"><div class="spinner"></div> Carregando dados do Firebase...</div>
+  </div>
+</div>
+
+<!-- MODAL SALDO -->
+<div class="modal-bg" id="modalSaldoBg">
+  <div class="modal">
+    <h2>💳 Configurar Saldos Iniciais</h2>
+    <div class="form-group">
+      <label>🏦 Saldo Bancário (conta corrente)</label>
+      <input type="number" id="inputBanco" placeholder="0,00" step="0.01"/>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="fecharModalSaldo()">Cancelar</button>
+      <button class="btn-save" onclick="salvarSaldos()">✅ Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL AJUSTE DATA -->
+<div class="modal-bg" id="modalAjusteBg">
+  <div class="modal" style="max-width:380px">
+    <h2 id="modalAjusteTitulo">📅 Ajustar Data de Vencimento</h2>
+    <div style="background:#f8fafc;border-radius:10px;padding:12px 14px;margin-bottom:16px">
+      <div style="font-size:.78rem;color:#6b7280;margin-bottom:4px">Lançamento</div>
+      <div style="font-size:.9rem;font-weight:700;color:#374151" id="ajusteNome"></div>
+      <div style="font-size:.82rem;color:#6b7280;margin-top:3px">Valor: <b id="ajusteValor" style="color:#1e293b"></b></div>
+      <div style="font-size:.82rem;color:#6b7280;margin-top:2px">Data atual: <b id="ajusteDataAtual"></b></div>
+    </div>
+    <!-- Botões rápidos -->
+    <div style="margin-bottom:14px">
+      <div style="font-size:.78rem;font-weight:600;color:#6b7280;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">⚡ Adiar rapidamente</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="ajustarRapido(7)"  style="flex:1;min-width:80px;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:8px;padding:8px 4px;font-size:.8rem;font-weight:700;cursor:pointer">+7 dias</button>
+        <button onclick="ajustarRapido(15)" style="flex:1;min-width:80px;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:8px;padding:8px 4px;font-size:.8rem;font-weight:700;cursor:pointer">+15 dias</button>
+        <button onclick="ajustarRapido(30)" style="flex:1;min-width:80px;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:8px;padding:8px 4px;font-size:.8rem;font-weight:700;cursor:pointer">+30 dias</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button onclick="ajustarRapido(-7)"  style="flex:1;min-width:80px;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;border-radius:8px;padding:8px 4px;font-size:.8rem;font-weight:700;cursor:pointer">−7 dias</button>
+        <button onclick="ajustarRapido(-15)" style="flex:1;min-width:80px;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;border-radius:8px;padding:8px 4px;font-size:.8rem;font-weight:700;cursor:pointer">−15 dias</button>
+        <button onclick="ajustarRapido(-30)" style="flex:1;min-width:80px;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;border-radius:8px;padding:8px 4px;font-size:.8rem;font-weight:700;cursor:pointer">−30 dias</button>
+      </div>
+    </div>
+    <!-- Data livre -->
+    <div class="form-group">
+      <label>📅 Ou escolha uma data específica</label>
+      <input type="date" id="ajusteDataNova"/>
+    </div>
+    <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;font-size:.78rem;color:#92400e;margin-bottom:16px">
+      ⚠️ O ajuste é <b>local</b> — salvo no seu navegador. Não altera o sistema principal.
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="fecharAjuste()">Cancelar</button>
+      <button onclick="confirmarAjuste()" style="background:#4f46e5;color:white;border:none;border-radius:8px;padding:9px 18px;font-size:.88rem;font-weight:600;cursor:pointer">✅ Aplicar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL LANÇAMENTO MANUAL -->
+<div class="modal-bg" id="modalManualBg">
+  <div class="modal">
+    <h2 id="modalManualTitulo">📌 Novo Lançamento Manual</h2>
+    <div class="form-group">
+      <label>Tipo</label>
+      <select id="manualTipo">
+        <option value="entrada">📥 Entrada (recebimento / depósito)</option>
+        <option value="saida">📤 Saída (pagamento / retirada)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Descrição</label>
+      <input type="text" id="manualDesc" placeholder="Ex: Adiantamento cliente"/>
+    </div>
+    <div class="form-group">
+      <label>Valor (R$)</label>
+      <input type="number" id="manualValor" placeholder="0,00" step="0.01" min="0.01"/>
+    </div>
+    <div class="form-group">
+      <label>Data</label>
+      <input type="date" id="manualData"/>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="fecharModalManual()">Cancelar</button>
+      <button class="btn-save" onclick="salvarManual()">✅ Adicionar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════
+// FIREBASE CONFIG
+// ══════════════════════════════════════════════════
+const FB_PROJECT = 'wencontasapagar';
+const FB_API_KEY = 'AIzaSyC7hYN3__Q_4MNAu6VCTXbTdvVSW37IneI';
+const FS_URL = `https://firestore.googleapis.com/v1/projects/${FB_PROJECT}/databases/(default)/documents`;
+
+function fromFV(fv){
+  if(!fv)return null;
+  if('nullValue' in fv)return null;
+  if('booleanValue' in fv)return fv.booleanValue;
+  if('integerValue' in fv)return Number(fv.integerValue);
+  if('doubleValue' in fv)return fv.doubleValue;
+  if('stringValue' in fv)return fv.stringValue;
+  if('arrayValue' in fv)return(fv.arrayValue.values||[]).map(fromFV);
+  if('mapValue' in fv){const o={};Object.keys(fv.mapValue.fields||{}).forEach(k=>o[k]=fromFV(fv.mapValue.fields[k]));return o;}
+  return null;
+}
+
+// ══════════════════════════════════════════════════
+// ESTADO
+// ══════════════════════════════════════════════════
+let _receber = [];  // registros com saldo > 0
+let _pagar   = [];  // contas pendentes com dia
+
+const MABS = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+const MN   = {JAN:1,FEV:2,MAR:3,ABR:4,MAI:5,JUN:6,JUL:7,AGO:8,SET:9,OUT:10,NOV:11,DEZ:12};
+const fmt  = v => 'R$ '+Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+function SIM_salvar(d){localStorage.setItem('wen_sim_v3',JSON.stringify(d));}
+function SIM_carregar(){try{return JSON.parse(localStorage.getItem('wen_sim_v3'))||{};}catch(e){return {};}}
+
+function toast(msg,cor='#16a34a'){
+  const t=document.getElementById('toast');t.textContent=msg;t.style.background=cor;
+  t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800);
+}
+function setSync(msg,cor='rgba(255,255,255,.15)'){
+  const el=document.getElementById('syncChip');el.textContent=msg;el.style.background=cor;
+}
+
+// ══════════════════════════════════════════════════
+// CARREGAMENTO FIREBASE
+// ══════════════════════════════════════════════════
+async function carregarFirebase(){
+  setSync('⏳ Buscando dados...');
+  try{
+    // Receber
+    let recDocs=[],pt=null;
+    do{
+      let url=`${FS_URL}/lancamentos?key=${FB_API_KEY}&pageSize=300`;
+      if(pt)url+='&pageToken='+pt;
+      const res=await fetch(url);
+      if(!res.ok)throw new Error('Receber HTTP '+res.status);
+      const json=await res.json();
+      if(json.documents)json.documents.forEach(doc=>{
+        const f=doc.fields||{};const obj={};
+        Object.keys(f).forEach(k=>obj[k]=fromFV(f[k]));
+        recDocs.push(obj);
+      });
+      pt=json.nextPageToken||null;
+    }while(pt);
+
+    // Pagar
+    let pagDocs=[],pt2=null;
+    do{
+      let url=`${FS_URL}/meses?key=${FB_API_KEY}&pageSize=300`;
+      if(pt2)url+='&pageToken='+pt2;
+      const res=await fetch(url);
+      if(!res.ok)throw new Error('Pagar HTTP '+res.status);
+      const json=await res.json();
+      if(json.documents)json.documents.forEach(doc=>{
+        const f=doc.fields||{};const obj={};
+        Object.keys(f).forEach(k=>obj[k]=fromFV(f[k]));
+        pagDocs.push(obj);
+      });
+      pt2=json.nextPageToken||null;
+    }while(pt2);
+
+    // Processa receber
+    _receber = recDocs.filter(r=>+(r.saldo||0)>0);
+
+    // Processa pagar
+    _pagar = [];
+    pagDocs.forEach(doc=>{
+      const contas = doc.contas||[];
+      const mes    = doc.mes||'';
+      contas.forEach(c=>{
+        if(c&&c.status?.toUpperCase()!=='PAGO'&&c.dia){
+          _pagar.push({...c, mes});
+        }
+      });
+    });
+
+    setSync('☁️ '+_receber.length+' a receber · '+_pagar.length+' a pagar','rgba(255,255,255,.2)');
+    console.log('[SIM] Receber:',_receber.length,'| Pagar:',_pagar.length);
+    render();
+  }catch(err){
+    console.error('[SIM] Erro Firebase:',err);
+    setSync('⚠️ '+err.message.slice(0,30),'rgba(239,68,68,.3)');
+    toast('Erro ao carregar dados: '+err.message,'#dc2626');
+    // Renderiza mesmo assim (com dados vazios ou do localStorage)
+    render();
+  }
+}
+
+async function atualizarDoFirebase(){
+  document.getElementById('mainContent').innerHTML='<div class="loading"><div class="spinner"></div> Atualizando do Firebase...</div>';
+  await carregarFirebase();
+}
+
+// ══════════════════════════════════════════════════
+// RENDER PRINCIPAL
+// ══════════════════════════════════════════════════
+function render(){
+  const sim       = SIM_carregar();
+  const saldoBanco = sim.saldoBanco ?? 0;
+  const saldoCaixa = sim.saldoCaixa ?? 0;
+  const extras     = sim.extras    || [];
+  const saldoTotal = saldoBanco + saldoCaixa;
+  const hoje       = new Date(); hoje.setHours(0,0,0,0);
+
+  function parseDt(v,mes){
+    if(!v||v==='-')return null;
+    const p=v.split('/');
+    if(p.length===3&&p[2].length===4){const d=new Date(+p[2],+p[1]-1,+p[0]);d.setHours(0,0,0,0);return d;}
+    if(p.length>=2){
+      let ano=hoje.getFullYear(),mn=hoje.getMonth();
+      if(mes){const mp=mes.split('/');ano=+mp[1]||ano;mn=MABS.indexOf(mp[0]);if(mn<0)mn=hoje.getMonth();}
+      const d=new Date(ano,mn,+p[0]);d.setHours(0,0,0,0);return d;
+    }
+    return null;
+  }
+
+  // Recebíveis — atrasados ficam fora da projeção, só aparecem no dashboard
+  const recFut=[],recAtras=[];
+  _receber.forEach(r=>{
+    const s=+(r.saldo||0);if(s<=0)return;
+    const venc=(r.vencimento&&r.vencimento!=='-')?r.vencimento:r.data;
+    const dt=parseDt(venc,r.mes);if(!dt)return;
+    if(dt<hoje) recAtras.push({dt,valor:s,label:r.cliente,atrasado:true,uid:r.id,tipo:'rec'});
+    else         recFut.push({dt,valor:s,label:r.cliente,atrasado:false,uid:r.id,tipo:'rec'});
+  });
+  const totRecAtras=recAtras.reduce((a,r)=>a+r.valor,0);
+  // Atrasados NÃO entram na projeção de caixa
+
+  // Pagar — atrasados ficam fora da projeção, só aparecem no dashboard
+  const pagFut=[],pagAtras=[];
+  _pagar.forEach(c=>{
+    if(c.status?.toUpperCase()==='PAGO'||!c.dia)return;
+    const[ma,as]=(c.mes||'').split('/');const mn=MN[ma];const ano=+as;if(!mn||!ano)return;
+    const dt=new Date(ano,mn-1,c.dia);dt.setHours(0,0,0,0);
+    if(dt<hoje) pagAtras.push({dt,valor:c.valor,label:c.nome,categoria:c.categoria,atrasado:true,uid:c.id,mes:c.mes,tipo:'pag'});
+    else         pagFut.push({dt,valor:c.valor,label:c.nome,categoria:c.categoria,atrasado:false,uid:c.id,mes:c.mes,tipo:'pag'});
+  });
+  const totPagAtras=pagAtras.reduce((a,r)=>a+r.valor,0);
+  // Atrasados NÃO entram na projeção de caixa
+
+  // Extras
+  const extrasV=extras.filter(e=>e.data&&e.valor);
+  extrasV.forEach(e=>{const p=e.data.split('-');e._dt=new Date(+p[0],+p[1]-1,+p[2]);e._dt.setHours(0,0,0,0);});
+
+  // Timeline 60 dias
+  let saldo=saldoTotal;
+  const timeline=[];
+  for(let i=0;i<60;i++){
+    const d=new Date(hoje);d.setDate(hoje.getDate()+i);
+    const rD=recFut.filter(r=>r.dt.toDateString()===d.toDateString());
+    const pD=pagFut.filter(r=>r.dt.toDateString()===d.toDateString());
+    const eD=extrasV.filter(e=>e._dt&&e._dt.toDateString()===d.toDateString());
+    const tR=rD.reduce((a,r)=>a+r.valor,0);
+    const tP=pD.reduce((a,r)=>a+r.valor,0);
+    const tEP=eD.filter(e=>e.tipo==='entrada').reduce((a,e)=>a+e.valor,0);
+    const tEN=eD.filter(e=>e.tipo==='saida').reduce((a,e)=>a+e.valor,0);
+    saldo+=tR+tEP-tP-tEN;
+    timeline.push({dt:d,saldo,rD,pD,eD,tR,tP,mov:rD.length+pD.length+eD.length});
+  }
+
+  const s7=timeline[6]?.saldo||saldoTotal;
+  const s15=timeline[14]?.saldo||saldoTotal;
+  const s30=timeline[29]?.saldo||saldoTotal;
+  const s60=timeline[59]?.saldo||saldoTotal;
+  const crit=timeline.find(t=>t.saldo<0);
+  const fd=d=>d.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'});
+  const fdW=d=>d.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'});
+
+  const totRec=recFut.reduce((a,r)=>a+r.valor,0);
+  const totPag=pagFut.reduce((a,r)=>a+r.valor,0);
+
+  // Monta HTML
+  let html='';
+
+  // SALDOS
+  const totRecFut = recFut.reduce((a,r)=>a+r.valor,0);
+  const totPagFut = pagFut.reduce((a,r)=>a+r.valor,0);
+  html+=`<div class="saldos-grid">
+    <div class="saldo-card card-banco">
+      <div class="sc-label">🏦 Saldo Bancário</div>
+      <div class="sc-valor">${fmt(saldoBanco)}</div>
+      <div class="sc-sub">Conta corrente · Base da simulação</div>
+      <button class="sc-btn" onclick="editarSaldo('saldoBanco')">✏️ Alterar</button>
+    </div>
+    <div class="saldo-card card-total">
+      <div class="sc-label">💰 Visão Geral</div>
+      <div class="sc-valor">${fmt(saldoBanco)}</div>
+      <div class="sc-sub">Saldo atual em caixa</div>
+      <div class="stats-bar">
+        <div class="stat"><div class="stat-val">${fmt(totRecFut)}</div><div class="stat-lbl">📥 a receber</div></div>
+        <div class="stat"><div class="stat-val">${fmt(totPagFut)}</div><div class="stat-lbl">📤 a pagar</div></div>
+        <div class="stat"><div class="stat-val">${fmt(s60)}</div><div class="stat-lbl">🔮 60 dias</div></div>
+      </div>
+    </div>
+  </div>`;
+
+  // CARDS CLICÁVEIS — A Receber (futuro + atrasado) e Contas Vencidas
+  function buildListaRec(lista,corFundo,corBorda,corValor,corTexto){
+    return lista.map(r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:${corFundo};border-radius:8px;font-size:.8rem">
+      <span style="color:#374151;font-weight:500">👤 ${r.label}</span>
+      <b style="color:${corValor}">${fmt(r.valor)}</b>
+    </div>`).join('');
+  }
+  function buildListaPag(lista){
+    return lista.map(r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:#fef2f2;border-radius:8px;font-size:.8rem">
+      <div>
+        <span style="color:#374151;font-weight:500">💳 ${r.label}</span>
+        <span style="font-size:.7rem;color:#9ca3af;margin-left:6px">${r.mes||''}</span>
+      </div>
+      <b style="color:#dc2626">${fmt(r.valor)}</b>
+    </div>`).join('');
+  }
+
+  // Card: A Receber (futuro)
+  const totalRecFuturo = recFut.reduce((a,r)=>a+r.valor,0);
+  html+=`<div style="background:white;border:1px solid #bbf7d0;border-radius:14px;overflow:hidden;margin-bottom:14px">
+    <div onclick="toggleSecao('recFuturo')" style="padding:16px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#f0fdf4;user-select:none">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:1.2rem">📥</span>
+        <div>
+          <div style="font-size:.85rem;font-weight:700;color:#15803d">A Receber — Futuros</div>
+          <div style="font-size:.72rem;color:#6b7280;margin-top:1px">${recFut.length} lançamento(s) · Entra na projeção</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="text-align:right">
+          <div style="font-size:1.15rem;font-weight:900;color:#16a34a">${fmt(totalRecFuturo)}</div>
+        </div>
+        <span id="icRecFuturo" style="color:#9ca3af;font-size:1rem;transition:transform .2s">▼</span>
+      </div>
+    </div>
+    <div id="recFuturo" style="display:none;padding:10px 14px;display:flex;flex-direction:column;gap:5px;max-height:300px;overflow-y:auto">
+      ${recFut.length ? buildListaRec(recFut,'#f0fdf4','#bbf7d0','#16a34a','#15803d') : '<div style="text-align:center;color:#9ca3af;padding:12px;font-size:.82rem">Nenhum recebível futuro</div>'}
+    </div>
+  </div>`;
+
+  // Card: A Receber em Atraso
+  if(recAtras.length>0){
+    html+=`<div style="background:white;border:1px solid #fde68a;border-radius:14px;overflow:hidden;margin-bottom:14px">
+      <div onclick="toggleSecao('recAtrasado')" style="padding:16px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#fffbeb;user-select:none">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:1.2rem">⚠️</span>
+          <div>
+            <div style="font-size:.85rem;font-weight:700;color:#92400e">A Receber — Em Atraso</div>
+            <div style="font-size:.72rem;color:#6b7280;margin-top:1px">${recAtras.length} lançamento(s) · Fora da projeção</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="text-align:right">
+            <div style="font-size:1.15rem;font-weight:900;color:#b45309">${fmt(totRecAtras)}</div>
+          </div>
+          <span id="icRecAtrasado" style="color:#9ca3af;font-size:1rem">▼</span>
+        </div>
+      </div>
+      <div id="recAtrasado" style="display:none;padding:10px 14px;flex-direction:column;gap:5px;max-height:300px;overflow-y:auto">
+        ${buildListaRec(recAtras,'#fffbeb','#fde68a','#b45309','#92400e')}
+      </div>
+    </div>`;
+  }
+
+  // Card: Contas Vencidas
+  if(pagAtras.length>0){
+    html+=`<div style="background:white;border:1px solid #fecaca;border-radius:14px;overflow:hidden;margin-bottom:14px">
+      <div onclick="toggleSecao('pagAtrasado')" style="padding:16px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#fef2f2;user-select:none">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:1.2rem">🔴</span>
+          <div>
+            <div style="font-size:.85rem;font-weight:700;color:#dc2626">Contas Vencidas</div>
+            <div style="font-size:.72rem;color:#6b7280;margin-top:1px">${pagAtras.length} conta(s) · Fora da projeção</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="text-align:right">
+            <div style="font-size:1.15rem;font-weight:900;color:#dc2626">${fmt(totPagAtras)}</div>
+          </div>
+          <span id="icPagAtrasado" style="color:#9ca3af;font-size:1rem">▼</span>
+        </div>
+      </div>
+      <div id="pagAtrasado" style="display:none;padding:10px 14px;flex-direction:column;gap:5px;max-height:300px;overflow-y:auto">
+        ${buildListaPag(pagAtras)}
+      </div>
+    </div>`;
+  }
+
+  // ALERTA
+  if(crit){
+    html+=`<div class="alerta danger">
+      <div class="alerta-icon">⚠️</div>
+      <div><div class="alerta-titulo">Caixa negativo previsto em ${fdW(crit.dt)}</div>
+      <div class="alerta-sub">Saldo projetado: <b style="color:#dc2626">${fmt(crit.saldo)}</b> — revise os pagamentos próximos a essa data.</div></div>
+    </div>`;
+  } else {
+    html+=`<div class="alerta success">
+      <div class="alerta-icon">✅</div>
+      <div><div class="alerta-titulo">Caixa positivo nos próximos 60 dias</div>
+      <div class="alerta-sub">Com base nos dados atuais, não há risco de saldo negativo.</div></div>
+    </div>`;
+  }
+
+  // KPIS
+  html+=`<div class="kpis-grid">
+    ${[{l:'📅 Em 7 dias',v:s7,d:fd(timeline[6].dt)},{l:'📅 Em 15 dias',v:s15,d:fd(timeline[14].dt)},{l:'📅 Em 30 dias',v:s30,d:fd(timeline[29].dt)},{l:'📅 Em 60 dias',v:s60,d:fd(timeline[59].dt)}]
+    .map(k=>`<div class="kpi-card ${k.v>=0?'pos':'neg'}">
+      <div class="kpi-label">${k.l}</div>
+      <div class="kpi-valor ${k.v>=0?'pos':'neg'}">${fmt(k.v)}</div>
+      <div class="kpi-data">${k.d}</div>
+    </div>`).join('')}
+  </div>`;
+
+  // GRÁFICO
+  html+=`<div class="grafico-wrap">
+    <div class="grafico-titulo">📈 Evolução do Saldo — 60 dias</div>
+    <canvas id="simChart" height="90"></canvas>
+  </div>`;
+
+  // LANÇAMENTOS MANUAIS
+  html+=`<div class="secao">
+    <div class="secao-header">
+      <div><div class="secao-titulo">📌 Lançamentos Manuais</div>
+      <div class="secao-sub">Entradas e saídas fora do sistema principal</div></div>
+      <button class="btn-header" style="background:#4f46e5;color:white;border-color:#4f46e5;font-size:.8rem" onclick="abrirModalManual()">+ Adicionar</button>
+    </div>
+    <div class="secao-body">`;
+  if(!extras.length){
+    html+='<div class="empty-state">Nenhum lançamento manual. Clique em "+ Adicionar" para inserir.</div>';
+  } else {
+    extras.forEach((e,i)=>{
+      const dt=new Date(e.data+'T12:00');
+      html+=`<div class="manual-item">
+        <div class="manual-icon ${e.tipo}">${e.tipo==='entrada'?'📥':'📤'}</div>
+        <div class="manual-info">
+          <div class="manual-nome">${e.descricao||'Sem descrição'}</div>
+          <div class="manual-data">${dt.toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'})} · ${e.tipo==='entrada'?'Entrada':'Saída'}</div>
+        </div>
+        <div style="display:flex;align-items:center">
+          <span class="manual-valor ${e.tipo}">${e.tipo==='entrada'?'+':'−'}${fmt(e.valor)}</span>
+          <button class="manual-del" onclick="delManual(${i})">✕</button>
+        </div>
+      </div>`;
+    });
+  }
+  html+='</div></div>';
+
+  // TIMELINE
+  html+=`<div class="secao">
+    <div class="secao-header">
+      <div><div class="secao-titulo">📋 Previsão Dia a Dia</div>
+      <div class="secao-sub">Clique em um dia para ver os detalhes</div></div>
+      <div style="display:flex;gap:6px;font-size:.71rem">
+        <span class="tl-badge rec">● Entrada</span>
+        <span class="tl-badge pag">● Saída</span>
+        <span class="tl-badge man">● Manual</span>
+      </div>
+    </div>
+    <div class="tl-scroll">`;
+
+  const diasMov=timeline.filter((t,i)=>t.mov>0||i%7===6||i===0);
+  diasMov.slice(0,50).forEach(t=>{
+    const isHj=t.dt.toDateString()===hoje.toDateString();
+    if(t.mov===0){
+      html+=`<div class="tl-marco">
+        <span>${fdW(t.dt)}</span>
+        <span style="font-weight:700;color:${t.saldo>=0?'#16a34a':'#dc2626'}">${fmt(t.saldo)}</span>
+      </div>`;
+      return;
+    }
+    const uid='tl'+t.dt.getTime();
+    html+=`<div class="tl-dia${isHj?' tl-dia-hoje':''}">
+      <div class="tl-dia-header" onclick="toggleTl('${uid}')">
+        <div>
+          <div class="tl-dia-nome${isHj?' hoje':''}">${isHj?'🔴 HOJE — ':''}${fdW(t.dt)}</div>
+          <div class="tl-badges">
+            ${t.tR>0?`<span class="tl-badge rec">+${fmt(t.tR)}</span>`:''}
+            ${t.tP>0?`<span class="tl-badge pag">−${fmt(t.tP)}</span>`:''}
+            ${t.eD.length?`<span class="tl-badge man">manual</span>`:''}
+          </div>
+        </div>
+        <div class="tl-saldo">
+          <div class="tl-saldo-label">saldo</div>
+          <div class="tl-saldo-valor ${t.saldo>=0?'pos':'neg'}">${fmt(t.saldo)}</div>
+        </div>
+      </div>
+      <div id="${uid}" class="tl-detalhe">`;
+
+    t.rD.forEach(r=>{
+      const uidR=r.uid||'';
+      html+=`<div class="tl-item rec" style="display:flex;justify-content:space-between;align-items:center">
+        <span class="tl-item-label">📥 ${r.label}${r.atrasado?'<span class="badge-atrasado">atrasado</span>':''}</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="tl-item-valor">+${fmt(r.valor)}</span>
+          <button onclick="abrirAjusteData('${uidR}','rec','${r.label.replace(/'/g,'')}',${r.valor},'${t.dt.toISOString().slice(0,10)}')" style="background:rgba(22,163,74,.12);border:none;border-radius:6px;padding:3px 8px;font-size:.72rem;cursor:pointer;color:#16a34a;font-weight:600" title="Ajustar data">📅 Ajustar</button>
+        </div>
+      </div>`;
+    });
+    t.pD.forEach(r=>{
+      const uidP=r.uid||'';
+      html+=`<div class="tl-item pag" style="display:flex;justify-content:space-between;align-items:center">
+        <span class="tl-item-label">💳 ${r.label}${r.atrasado?'<span class="badge-atrasado">atrasado</span>':''}</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="tl-item-valor">−${fmt(r.valor)}</span>
+          <button onclick="abrirAjusteData('${uidP}','pag','${r.label.replace(/'/g,'')}',${r.valor},'${t.dt.toISOString().slice(0,10)}')" style="background:rgba(220,38,38,.1);border:none;border-radius:6px;padding:3px 8px;font-size:.72rem;cursor:pointer;color:#dc2626;font-weight:600" title="Ajustar data">📅 Ajustar</button>
+        </div>
+      </div>`;
+    });
+    t.eD.forEach(e=>{
+      html+=`<div class="tl-item man">
+        <span class="tl-item-label">📌 ${e.descricao||'Manual'}</span>
+        <span class="tl-item-valor">${e.tipo==='entrada'?'+':'−'}${fmt(e.valor)}</span>
+      </div>`;
+    });
+
+    html+=`</div></div>`;
+  });
+
+  html+=`</div></div>`;
+
+  document.getElementById('mainContent').innerHTML=html;
+
+  // Renderiza gráfico
+  const step=Math.max(1,Math.floor(60/15));
+  const gl=timeline.filter((_,i)=>i%step===0||i===59).map(t=>fd(t.dt));
+  const gd=timeline.filter((_,i)=>i%step===0||i===59).map(t=>t.saldo);
+  const gc=document.getElementById('simChart');
+  if(gc){
+    new Chart(gc,{
+      type:'line',
+      data:{labels:gl,datasets:[{
+        label:'Saldo',data:gd,
+        segment:{borderColor:ctx=>ctx.p1.parsed.y>=0?'#22c55e':'#ef4444'},
+        backgroundColor:'rgba(99,102,241,.05)',
+        tension:.4,fill:true,pointRadius:3,
+        pointBackgroundColor:gd.map(v=>v>=0?'#22c55e':'#ef4444'),
+        borderWidth:2.5
+      }]},
+      options:{
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'Saldo: '+fmt(c.raw)}}},
+        scales:{
+          y:{ticks:{callback:v=>'R$'+Math.round(v/1000)+'k',color:'#6b7280',font:{size:11}},grid:{color:'#f1f5f9'}},
+          x:{ticks:{color:'#6b7280',maxTicksLimit:10,font:{size:11}},grid:{display:false}}
+        }
+      }
+    });
+  }
+}
+
+// ══════════════════════════════════════════════════
+// INTERAÇÕES
+// ══════════════════════════════════════════════════
+function toggleSecao(id){
+  const el=document.getElementById(id);
+  const ic=document.getElementById('ic'+id[0].toUpperCase()+id.slice(1));
+  if(!el)return;
+  const aberto=el.style.display==='flex';
+  el.style.display=aberto?'none':'flex';
+  if(ic)ic.textContent=aberto?'▼':'▲';
+}
+// ── Ajuste de data local ──
+let _ajuste = null; // { uid, tipo, dtBase }
+
+function SIM_getAjustes(){
+  try{return JSON.parse(localStorage.getItem('wen_sim_ajustes'))||{};}
+  catch(e){return {};}
+}
+function SIM_salvarAjuste(uid, novaData){
+  const aj = SIM_getAjustes();
+  aj[uid] = novaData; // formato YYYY-MM-DD
+  localStorage.setItem('wen_sim_ajustes', JSON.stringify(aj));
+}
+function SIM_removerAjuste(uid){
+  const aj = SIM_getAjustes();
+  delete aj[uid];
+  localStorage.setItem('wen_sim_ajustes', JSON.stringify(aj));
+}
+
+function abrirAjusteData(uid, tipo, nome, valor, dataAtualISO){
+  _ajuste = {uid, tipo, dtBase: dataAtualISO};
+  const ajustes = SIM_getAjustes();
+  const dataEfetiva = ajustes[uid] || dataAtualISO;
+
+  document.getElementById('ajusteNome').textContent = (tipo==='rec'?'📥 ':'💳 ') + nome;
+  document.getElementById('ajusteValor').textContent = (tipo==='rec'?'+':'-') + fmt(valor);
+  document.getElementById('ajusteDataAtual').textContent = new Date(dataAtualISO+'T12:00').toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short',year:'numeric'});
+  document.getElementById('ajusteDataNova').value = dataEfetiva;
+  document.getElementById('modalAjusteTitulo').textContent = tipo==='rec' ? '📅 Ajustar Recebimento' : '📅 Ajustar Pagamento';
+  document.getElementById('modalAjusteBg').classList.add('open');
+}
+
+function fecharAjuste(){
+  document.getElementById('modalAjusteBg').classList.remove('open');
+  _ajuste = null;
+}
+
+function ajustarRapido(dias){
+  const atual = document.getElementById('ajusteDataNova').value || _ajuste?.dtBase;
+  if(!atual)return;
+  const d = new Date(atual+'T12:00');
+  d.setDate(d.getDate() + dias);
+  document.getElementById('ajusteDataNova').value = d.toISOString().slice(0,10);
+}
+
+function confirmarAjuste(){
+  if(!_ajuste)return;
+  const novaData = document.getElementById('ajusteDataNova').value;
+  if(!novaData){toast('Escolha uma data','#ef4444');return;}
+  SIM_salvarAjuste(_ajuste.uid, novaData);
+  fecharAjuste();
+  render();
+  const dt = new Date(novaData+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'short'});
+  toast('✅ Vencimento ajustado para '+dt,'#4f46e5');
+}
+
+// Aplica ajustes locais ao montar recFut e pagFut
+function aplicarAjustesLocais(lista){
+  const aj = SIM_getAjustes();
+  return lista.map(item=>{
+    if(item.uid && aj[item.uid]){
+      const p = aj[item.uid].split('-');
+      const novaDt = new Date(+p[0],+p[1]-1,+p[2]);
+      novaDt.setHours(0,0,0,0);
+      return {...item, dt:novaDt, ajustado:true};
+    }
+    return item;
+  });
+}
+
+function toggleTl(uid){
+  const el=document.getElementById(uid);
+  if(!el)return;
+  el.style.display=el.style.display==='flex'?'none':'flex';
+}
+
+// Saldos
+function abrirModalSaldo(){
+  const sim=SIM_carregar();
+  document.getElementById('inputBanco').value=sim.saldoBanco??0;
+  document.getElementById('inputCaixa').value=sim.saldoCaixa??0;
+  document.getElementById('modalSaldoBg').classList.add('open');
+}
+function fecharModalSaldo(){document.getElementById('modalSaldoBg').classList.remove('open');}
+function salvarSaldos(){
+  const sim=SIM_carregar();
+  sim.saldoBanco=parseFloat(document.getElementById('inputBanco').value)||0;
+  SIM_salvar(sim);fecharModalSaldo();render();toast('✅ Saldo atualizado!');
+}
+function editarSaldo(campo){
+  const sim=SIM_carregar();
+  const v=prompt('🏦 Saldo Bancário (R$):',sim[campo]??0);
+  if(v===null)return;
+  const val=parseFloat(v.replace(',','.').replace(/[^\d.-]/g,''));
+  if(isNaN(val)){toast('Valor inválido','#ef4444');return;}
+  sim[campo]=val;SIM_salvar(sim);render();toast('✅ Saldo atualizado!');
+}
+
+// Manuais
+function abrirModalManual(){
+  document.getElementById('manualTipo').value='entrada';
+  document.getElementById('manualDesc').value='';
+  document.getElementById('manualValor').value='';
+  document.getElementById('manualData').value=new Date().toISOString().slice(0,10);
+  document.getElementById('modalManualBg').classList.add('open');
+}
+function fecharModalManual(){document.getElementById('modalManualBg').classList.remove('open');}
+function salvarManual(){
+  const tipo=document.getElementById('manualTipo').value;
+  const desc=document.getElementById('manualDesc').value.trim();
+  const val=parseFloat(document.getElementById('manualValor').value);
+  const data=document.getElementById('manualData').value;
+  if(!desc){toast('Informe a descrição','#ef4444');return;}
+  if(!val||val<=0){toast('Informe um valor válido','#ef4444');return;}
+  if(!data||!/^\d{4}-\d{2}-\d{2}$/.test(data)){toast('Data inválida','#ef4444');return;}
+  const sim=SIM_carregar();
+  if(!sim.extras)sim.extras=[];
+  sim.extras.push({tipo,descricao:desc,valor:val,data});
+  SIM_salvar(sim);fecharModalManual();render();
+  toast('✅ Lançamento adicionado!','#4f46e5');
+}
+function delManual(i){
+  if(!confirm('Remover este lançamento?'))return;
+  const sim=SIM_carregar();
+  sim.extras.splice(i,1);SIM_salvar(sim);render();
+}
+
+// Fecha modal ao clicar fora
+document.addEventListener('click',e=>{
+  if(e.target.id==='modalSaldoBg')fecharModalSaldo();
+  if(e.target.id==='modalManualBg')fecharModalManual();
+  if(e.target.id==='modalAjusteBg')fecharAjuste();
+});
+
+// ══════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════
+carregarFirebase();
+</script>
+</body>
+</html>
