@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -169,6 +170,18 @@ html{height:-webkit-fill-available}
 .stats-bar .stat{text-align:center}
 .stats-bar .stat-val{font-size:.9rem;font-weight:800;color:white}
 .stats-bar .stat-lbl{font-size:.65rem;opacity:.6;text-transform:uppercase;letter-spacing:.06em}
+
+.tl-dia-critica{background:#fff7f7}
+.tl-dia-critica .tl-dia-header{border-left:3px solid #ef4444}
+
+/* Print / PDF */
+@media print{
+  .header-actions,.btn-header,.sc-btn,.manual-del,.tl-badge{display:none!important}
+  .header{padding:12px 20px}
+  .container{padding:12px}
+  .grafico-wrap,.kpis-grid,.saldo-card{break-inside:avoid}
+  body{background:white}
+}
 
 @media(max-width:480px){
   .container{padding:14px 10px 32px}
@@ -404,12 +417,15 @@ async function atualizarDoFirebase(){
 // RENDER PRINCIPAL
 // ══════════════════════════════════════════════════
 function render(){
-  const sim       = SIM_carregar();
+  const sim        = SIM_carregar();
   const saldoBanco = sim.saldoBanco ?? 0;
-  const saldoCaixa = sim.saldoCaixa ?? 0;
-  const extras     = sim.extras    || [];
-  const saldoTotal = saldoBanco + saldoCaixa;
+  const extras     = sim.extras     || [];
+  const metaMinima = sim.metaMinima ?? 0;
   const hoje       = new Date(); hoje.setHours(0,0,0,0);
+
+  const MABS = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+  const MN   = {JAN:1,FEV:2,MAR:3,ABR:4,MAI:5,JUN:6,JUL:7,AGO:8,SET:9,OUT:10,NOV:11,DEZ:12};
+  const fmtV = v => 'R$ '+Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 
   function parseDt(v,mes){
     if(!v||v==='-')return null;
@@ -423,7 +439,7 @@ function render(){
     return null;
   }
 
-  // Recebíveis — atrasados ficam fora da projeção, só aparecem no dashboard
+  // ── Recebíveis ──
   const recFut=[],recAtras=[];
   _receber.forEach(r=>{
     const s=+(r.saldo||0);if(s<=0)return;
@@ -433,9 +449,8 @@ function render(){
     else         recFut.push({dt,valor:s,label:r.cliente,atrasado:false,uid:r.id,tipo:'rec'});
   });
   const totRecAtras=recAtras.reduce((a,r)=>a+r.valor,0);
-  // Atrasados NÃO entram na projeção de caixa
 
-  // Pagar — atrasados ficam fora da projeção, só aparecem no dashboard
+  // ── Pagar ──
   const pagFut=[],pagAtras=[];
   _pagar.forEach(c=>{
     if(c.status?.toUpperCase()==='PAGO'||!c.dia)return;
@@ -445,14 +460,19 @@ function render(){
     else         pagFut.push({dt,valor:c.valor,label:c.nome,categoria:c.categoria,atrasado:false,uid:c.id,mes:c.mes,tipo:'pag'});
   });
   const totPagAtras=pagAtras.reduce((a,r)=>a+r.valor,0);
-  // Atrasados NÃO entram na projeção de caixa
 
-  // Extras
+  // ── Ajustes locais ──
+  const recFutAj=aplicarAjustesLocais(recFut);
+  const pagFutAj=aplicarAjustesLocais(pagFut);
+  recFut.length=0;recFutAj.forEach(x=>recFut.push(x));
+  pagFut.length=0;pagFutAj.forEach(x=>pagFut.push(x));
+
+  // ── Extras manuais ──
   const extrasV=extras.filter(e=>e.data&&e.valor);
   extrasV.forEach(e=>{const p=e.data.split('-');e._dt=new Date(+p[0],+p[1]-1,+p[2]);e._dt.setHours(0,0,0,0);});
 
-  // Timeline 60 dias
-  let saldo=saldoTotal;
+  // ── Timeline 60 dias ──
+  let saldo=saldoBanco;
   const timeline=[];
   for(let i=0;i<60;i++){
     const d=new Date(hoje);d.setDate(hoje.getDate()+i);
@@ -467,171 +487,308 @@ function render(){
     timeline.push({dt:d,saldo,rD,pD,eD,tR,tP,mov:rD.length+pD.length+eD.length});
   }
 
-  const s7=timeline[6]?.saldo||saldoTotal;
-  const s15=timeline[14]?.saldo||saldoTotal;
-  const s30=timeline[29]?.saldo||saldoTotal;
-  const s60=timeline[59]?.saldo||saldoTotal;
+  // ── KPIs base ──
+  const s7=timeline[6]?.saldo||saldoBanco;
+  const s15=timeline[14]?.saldo||saldoBanco;
+  const s30=timeline[29]?.saldo||saldoBanco;
+  const s60=timeline[59]?.saldo||saldoBanco;
   const crit=timeline.find(t=>t.saldo<0);
+  const critMeta=metaMinima>0?timeline.find(t=>t.saldo<metaMinima):null;
+
+  // ── RUNWAY (dias sem receita nova) ──
+  let saldoR=saldoBanco,runwayDias=0;
+  for(let i=0;i<365;i++){
+    const d=new Date(hoje);d.setDate(hoje.getDate()+i);
+    const pD=pagFut.filter(r=>r.dt.toDateString()===d.toDateString());
+    const eD=extrasV.filter(e=>e._dt&&e._dt.toDateString()===d.toDateString());
+    saldoR-=pD.reduce((a,r)=>a+r.valor,0);
+    saldoR-=eD.filter(e=>e.tipo==='saida').reduce((a,e)=>a+e.valor,0);
+    if(saldoR>=0)runwayDias++;
+    else break;
+  }
+  if(runwayDias>=365)runwayDias=365;
+
+  // ── SEMANAS (para gráfico de barras) ──
+  const semanas=[];
+  for(let s=0;s<8;s++){
+    const ini=new Date(hoje);ini.setDate(hoje.getDate()+s*7);
+    const fim=new Date(ini);fim.setDate(ini.getDate()+6);
+    const diasSem=timeline.filter(t=>t.dt>=ini&&t.dt<=fim);
+    const entradas=diasSem.reduce((a,t)=>a+t.tR+t.eD.filter(e=>e.tipo==='entrada').reduce((b,e)=>b+e.valor,0),0);
+    const saidas  =diasSem.reduce((a,t)=>a+t.tP+t.eD.filter(e=>e.tipo==='saida').reduce((b,e)=>b+e.valor,0),0);
+    const saldoFim=diasSem.length?diasSem[diasSem.length-1].saldo:saldoBanco;
+    semanas.push({ini,fim,entradas,saidas,saldoFim,label:'S'+(s+1)+'\n'+ini.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})});
+  }
+  const semCritica=semanas.reduce((min,s)=>s.saldoFim<min.saldoFim?s:min,semanas[0]);
+
+  // ── ALERTAS INTELIGENTES ──
+  const alertas=[];
+
+  // Concentração de recebíveis
+  const totRecFut=recFut.reduce((a,r)=>a+r.valor,0);
+  if(totRecFut>0){
+    const porCliente={};
+    recFut.forEach(r=>{porCliente[r.label]=(porCliente[r.label]||0)+r.valor;});
+    const [top,topVal]=Object.entries(porCliente).sort((a,b)=>b[1]-a[1])[0]||['',0];
+    const pct=Math.round(topVal/totRecFut*100);
+    if(pct>=50)alertas.push({tipo:'warn',icon:'⚠️',titulo:'Concentração de recebíveis',msg:`<b>${top}</b> representa <b>${pct}%</b> do total a receber (${fmtV(topVal)}). Risco de dependência.`});
+  }
+
+  // Vencimento próximo grande (>5k em 7 dias)
+  const proximos7=pagFut.filter(r=>{const diff=(r.dt-hoje)/86400000;return diff>=0&&diff<=7&&r.valor>=5000;});
+  if(proximos7.length>0){
+    const tot7=proximos7.reduce((a,r)=>a+r.valor,0);
+    alertas.push({tipo:'danger',icon:'🔔',titulo:'Contas grandes vencem em 7 dias',msg:`${proximos7.length} conta(s) somando <b>${fmtV(tot7)}</b> vencem esta semana.`});
+  }
+
+  // Meta mínima de caixa
+  if(metaMinima>0&&critMeta){
+    const dias=(critMeta.dt-hoje)/86400000;
+    alertas.push({tipo:'warn',icon:'🎯',titulo:'Meta de caixa em risco',msg:`Saldo cai abaixo de <b>${fmtV(metaMinima)}</b> em ${Math.round(dias)} dia(s) (${critMeta.dt.toLocaleDateString('pt-BR')}).`});
+  }
+
+  // Saldo já negativo
+  if(crit){
+    const dias=Math.round((crit.dt-hoje)/86400000);
+    alertas.push({tipo:'critical',icon:'🚨',titulo:'Caixa negativo previsto',msg:`Saldo fica negativo em ${dias} dia(s) — <b>${crit.dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'})}</b>. Projetado: <b style="color:#dc2626">${fmtV(crit.saldo)}</b>`});
+  }
+
   const fd=d=>d.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'});
   const fdW=d=>d.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'});
+  const DN=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 
-  const totRec=recFut.reduce((a,r)=>a+r.valor,0);
-  const totPag=pagFut.reduce((a,r)=>a+r.valor,0);
-
-  // Monta HTML
   let html='';
 
-  // SALDOS
-  const totRecFut = recFut.reduce((a,r)=>a+r.valor,0);
-  const totPagFut = pagFut.reduce((a,r)=>a+r.valor,0);
+  // ════════════════════════════
+  // SALDO + RUNWAY
+  // ════════════════════════════
+  const totRecFuturo=recFut.reduce((a,r)=>a+r.valor,0);
+  const totPagFuturo=pagFut.reduce((a,r)=>a+r.valor,0);
+  const runwayColor=runwayDias>=60?'#16a34a':runwayDias>=30?'#f97316':'#dc2626';
+  const runwayBg   =runwayDias>=60?'rgba(22,163,74,.15)':runwayDias>=30?'rgba(249,115,22,.15)':'rgba(220,38,38,.15)';
+
   html+=`<div class="saldos-grid">
     <div class="saldo-card card-banco">
       <div class="sc-label">🏦 Saldo Bancário</div>
-      <div class="sc-valor">${fmt(saldoBanco)}</div>
+      <div class="sc-valor">${fmtV(saldoBanco)}</div>
       <div class="sc-sub">Conta corrente · Base da simulação</div>
-      <button class="sc-btn" onclick="editarSaldo('saldoBanco')">✏️ Alterar</button>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="sc-btn" onclick="editarSaldo('saldoBanco')">✏️ Alterar</button>
+        <button class="sc-btn" onclick="abrirMetaMinima()">🎯 Meta mínima${metaMinima>0?' · '+fmtV(metaMinima):''}</button>
+      </div>
     </div>
     <div class="saldo-card card-total">
       <div class="sc-label">💰 Visão Geral</div>
-      <div class="sc-valor">${fmt(saldoBanco)}</div>
-      <div class="sc-sub">Saldo atual em caixa</div>
-      <div class="stats-bar">
-        <div class="stat"><div class="stat-val">${fmt(totRecFut)}</div><div class="stat-lbl">📥 a receber</div></div>
-        <div class="stat"><div class="stat-val">${fmt(totPagFut)}</div><div class="stat-lbl">📤 a pagar</div></div>
-        <div class="stat"><div class="stat-val">${fmt(s60)}</div><div class="stat-lbl">🔮 60 dias</div></div>
+      <div class="sc-valor">${fmtV(saldoBanco)}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px">
+        <div style="background:rgba(255,255,255,.1);border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:.95rem;font-weight:800;color:#86efac">${fmtV(totRecFuturo)}</div>
+          <div style="font-size:.62rem;opacity:.6;margin-top:2px;text-transform:uppercase;letter-spacing:.05em">📥 a receber</div>
+        </div>
+        <div style="background:rgba(255,255,255,.1);border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:.95rem;font-weight:800;color:#fca5a5">${fmtV(totPagFuturo)}</div>
+          <div style="font-size:.62rem;opacity:.6;margin-top:2px;text-transform:uppercase;letter-spacing:.05em">📤 a pagar</div>
+        </div>
+        <div style="background:${runwayBg};border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:.95rem;font-weight:800;color:${runwayColor}">${runwayDias>=365?'365+':runwayDias}d</div>
+          <div style="font-size:.62rem;opacity:.6;margin-top:2px;text-transform:uppercase;letter-spacing:.05em">🛫 runway</div>
+        </div>
       </div>
     </div>
   </div>`;
 
-  // CARDS CLICÁVEIS — A Receber (futuro + atrasado) e Contas Vencidas
-  function buildListaRec(lista,corFundo,corBorda,corValor,corTexto){
-    return lista.map(r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:${corFundo};border-radius:8px;font-size:.8rem">
-      <span style="color:#374151;font-weight:500">👤 ${r.label}</span>
-      <b style="color:${corValor}">${fmt(r.valor)}</b>
+  // ════════════════════════════
+  // ALERTAS INTELIGENTES
+  // ════════════════════════════
+  const alertCors={critical:{bg:'#fef2f2',bd:'#fecaca',tit:'#b91c1c'},warn:{bg:'#fffbeb',bd:'#fde68a',tit:'#92400e'},info:{bg:'#eff6ff',bd:'#bfdbfe',tit:'#1e40af'}};
+  if(alertas.length){
+    html+=`<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:18px">`;
+    alertas.forEach(a=>{
+      const c=alertCors[a.tipo]||alertCors.warn;
+      html+=`<div style="background:${c.bg};border:1px solid ${c.bd};border-radius:12px;padding:13px 16px;display:flex;gap:11px;align-items:flex-start">
+        <span style="font-size:1.2rem;flex-shrink:0;margin-top:1px">${a.icon}</span>
+        <div>
+          <div style="font-weight:700;color:${c.tit};font-size:.87rem;margin-bottom:3px">${a.titulo}</div>
+          <div style="font-size:.8rem;color:#6b7280;line-height:1.5">${a.msg}</div>
+        </div>
+      </div>`;
+    });
+    html+=`</div>`;
+  } else if(!crit){
+    html+=`<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:13px 16px;margin-bottom:18px;display:flex;gap:11px;align-items:center">
+      <span style="font-size:1.2rem">✅</span>
+      <div style="font-weight:600;color:#166534;font-size:.87rem">Nenhum alerta — caixa saudável nos próximos 60 dias.</div>
+    </div>`;
+  }
+
+  // ════════════════════════════
+  // RUNWAY DESTAQUE
+  // ════════════════════════════
+  html+=`<div style="background:white;border-radius:14px;padding:16px 20px;border:1px solid ${runwayDias>=60?'#bbf7d0':runwayDias>=30?'#fed7aa':'#fecaca'};margin-bottom:18px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <div style="background:${runwayBg};border-radius:12px;width:64px;height:64px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+      <span style="font-size:1.8rem">🛫</span>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;font-weight:600;margin-bottom:4px">Runway — Autonomia de Caixa</div>
+      <div style="font-size:1.4rem;font-weight:900;color:${runwayColor}">${runwayDias>=365?'Mais de 1 ano':runwayDias+' dias'}</div>
+      <div style="font-size:.8rem;color:#6b7280;margin-top:3px">Sem receita nova, o caixa cobre as despesas por este período.</div>
+    </div>
+    <div style="text-align:right;flex-shrink:0">
+      <div style="font-size:.72rem;color:#6b7280;margin-bottom:2px">Até</div>
+      <div style="font-size:.92rem;font-weight:700;color:#374151">${(()=>{const d=new Date(hoje);d.setDate(hoje.getDate()+runwayDias);return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'});})()}</div>
+    </div>
+  </div>`;
+
+  // ════════════════════════════
+  // KPIs 4 blocos
+  // ════════════════════════════
+  html+=`<div class="kpis-grid">
+    ${[{l:'📅 7 dias',v:s7,d:fd(timeline[6].dt)},{l:'📅 15 dias',v:s15,d:fd(timeline[14].dt)},{l:'📅 30 dias',v:s30,d:fd(timeline[29].dt)},{l:'📅 60 dias',v:s60,d:fd(timeline[59].dt)}]
+    .map(k=>`<div class="kpi-card ${k.v>=0?'pos':'neg'}">
+      <div class="kpi-label">${k.l}</div>
+      <div class="kpi-valor ${k.v>=0?'pos':'neg'}">${fmtV(k.v)}</div>
+      <div class="kpi-data">${k.d}</div>
+    </div>`).join('')}
+  </div>`;
+
+  // ════════════════════════════
+  // GRÁFICO SALDO (linha)
+  // ════════════════════════════
+  html+=`<div class="grafico-wrap" style="margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div class="grafico-titulo" style="margin:0">📈 Evolução do Saldo — 60 dias</div>
+      ${metaMinima>0?`<div style="font-size:.75rem;color:#6b7280">— meta mínima: <b style="color:#f97316">${fmtV(metaMinima)}</b></div>`:''}
+    </div>
+    <canvas id="simChartLinha" height="90"></canvas>
+  </div>`;
+
+  // ════════════════════════════
+  // GRÁFICO BARRAS SEMANAIS
+  // ════════════════════════════
+  html+=`<div class="grafico-wrap">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div class="grafico-titulo" style="margin:0">📊 Entradas vs Saídas — Por Semana</div>
+      <div style="display:flex;gap:12px;font-size:.72rem">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#22c55e;border-radius:2px;display:inline-block"></span>Entradas</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#ef4444;border-radius:2px;display:inline-block"></span>Saídas</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:#f97316;border-radius:2px;display:inline-block"></span>Semana crítica</span>
+      </div>
+    </div>
+    <canvas id="simChartBarras" height="110"></canvas>
+    <div style="margin-top:12px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:1rem">🔴</span>
+      <div style="font-size:.8rem;color:#374151">
+        <b style="color:#b91c1c">Semana crítica:</b> ${semCritica.ini.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})} – ${semCritica.fim.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'})}
+        · Saldo ao fim: <b style="color:${semCritica.saldoFim>=0?'#16a34a':'#dc2626'}">${fmtV(semCritica.saldoFim)}</b>
+        · Entradas: ${fmtV(semCritica.entradas)} · Saídas: ${fmtV(semCritica.saidas)}
+      </div>
+    </div>
+  </div>`;
+
+  // ════════════════════════════
+  // CARDS CLICÁVEIS
+  // ════════════════════════════
+  function buildListaRec(lista){
+    const notas=SIM_carregar().notas||{};
+    return lista.map(r=>`<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 12px;background:#f0fdf4;border-radius:8px;gap:8px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.82rem;font-weight:600;color:#374151">👤 ${r.label}</div>
+        <div style="font-size:.72rem;color:#9ca3af;margin-top:2px">${fd(r.dt)}${notas[r.uid]?` · 📝 ${notas[r.uid]}`:''}${r.atrasado?' <span style="background:#fef3c7;color:#92400e;font-size:.68rem;padding:1px 5px;border-radius:4px">atrasado</span>':''}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+        <b style="color:#16a34a">${fmtV(r.valor)}</b>
+        ${r.uid?`<button onclick="abrirNota('${r.uid}','${r.label.replace(/'/g,'')}')" style="background:rgba(99,102,241,.1);border:none;border-radius:5px;padding:2px 6px;font-size:.7rem;cursor:pointer;color:#4f46e5" title="Adicionar nota">📝</button>`:''}
+      </div>
     </div>`).join('');
   }
   function buildListaPag(lista){
-    return lista.map(r=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:#fef2f2;border-radius:8px;font-size:.8rem">
-      <div>
-        <span style="color:#374151;font-weight:500">💳 ${r.label}</span>
-        <span style="font-size:.7rem;color:#9ca3af;margin-left:6px">${r.mes||''}</span>
+    const notas=SIM_carregar().notas||{};
+    return lista.map(r=>`<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 12px;background:#fef2f2;border-radius:8px;gap:8px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.82rem;font-weight:600;color:#374151">💳 ${r.label}</div>
+        <div style="font-size:.72rem;color:#9ca3af;margin-top:2px">${fd(r.dt)} · ${r.mes||''}${notas[r.uid]?` · 📝 ${notas[r.uid]}`:''}${r.atrasado?' <span style="background:#fee2e2;color:#dc2626;font-size:.68rem;padding:1px 5px;border-radius:4px">atrasado</span>':''}</div>
       </div>
-      <b style="color:#dc2626">${fmt(r.valor)}</b>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+        <b style="color:#dc2626">${fmtV(r.valor)}</b>
+        ${r.uid?`<button onclick="abrirNota('${r.uid}','${r.label.replace(/'/g,'')}')" style="background:rgba(99,102,241,.1);border:none;border-radius:5px;padding:2px 6px;font-size:.7rem;cursor:pointer;color:#4f46e5" title="Adicionar nota">📝</button>`:''}
+      </div>
     </div>`).join('');
   }
 
-  // Card: A Receber (futuro)
-  const totalRecFuturo = recFut.reduce((a,r)=>a+r.valor,0);
-  html+=`<div style="background:white;border:1px solid #bbf7d0;border-radius:14px;overflow:hidden;margin-bottom:14px">
-    <div onclick="toggleSecao('recFuturo')" style="padding:16px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#f0fdf4;user-select:none">
+  // Card a receber futuro
+  html+=`<div style="background:white;border:1px solid #bbf7d0;border-radius:14px;overflow:hidden;margin-bottom:12px">
+    <div onclick="toggleSecao('recFuturo')" style="padding:15px 18px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#f0fdf4;user-select:none">
       <div style="display:flex;align-items:center;gap:10px">
-        <span style="font-size:1.2rem">📥</span>
+        <span style="font-size:1.1rem">📥</span>
         <div>
           <div style="font-size:.85rem;font-weight:700;color:#15803d">A Receber — Futuros</div>
-          <div style="font-size:.72rem;color:#6b7280;margin-top:1px">${recFut.length} lançamento(s) · Entra na projeção</div>
+          <div style="font-size:.72rem;color:#6b7280">${recFut.length} lançamento(s) · Entra na projeção</div>
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:12px">
-        <div style="text-align:right">
-          <div style="font-size:1.15rem;font-weight:900;color:#16a34a">${fmt(totalRecFuturo)}</div>
-        </div>
-        <span id="icRecFuturo" style="color:#9ca3af;font-size:1rem;transition:transform .2s">▼</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:1.1rem;font-weight:900;color:#16a34a">${fmtV(totRecFuturo)}</div>
+        <span id="icRecFuturo" style="color:#9ca3af;font-size:.9rem">▼</span>
       </div>
     </div>
-    <div id="recFuturo" style="display:none;padding:10px 14px;display:flex;flex-direction:column;gap:5px;max-height:300px;overflow-y:auto">
-      ${recFut.length ? buildListaRec(recFut,'#f0fdf4','#bbf7d0','#16a34a','#15803d') : '<div style="text-align:center;color:#9ca3af;padding:12px;font-size:.82rem">Nenhum recebível futuro</div>'}
+    <div id="recFuturo" style="display:none;padding:10px 14px;flex-direction:column;gap:5px;max-height:320px;overflow-y:auto">
+      ${recFut.length?buildListaRec(recFut):'<div style="text-align:center;color:#9ca3af;padding:12px;font-size:.82rem">Nenhum recebível futuro</div>'}
     </div>
   </div>`;
 
-  // Card: A Receber em Atraso
-  if(recAtras.length>0){
-    html+=`<div style="background:white;border:1px solid #fde68a;border-radius:14px;overflow:hidden;margin-bottom:14px">
-      <div onclick="toggleSecao('recAtrasado')" style="padding:16px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#fffbeb;user-select:none">
+  if(recAtras.length){
+    html+=`<div style="background:white;border:1px solid #fde68a;border-radius:14px;overflow:hidden;margin-bottom:12px">
+      <div onclick="toggleSecao('recAtrasado')" style="padding:15px 18px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#fffbeb;user-select:none">
         <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-size:1.2rem">⚠️</span>
+          <span style="font-size:1.1rem">⚠️</span>
           <div>
             <div style="font-size:.85rem;font-weight:700;color:#92400e">A Receber — Em Atraso</div>
-            <div style="font-size:.72rem;color:#6b7280;margin-top:1px">${recAtras.length} lançamento(s) · Fora da projeção</div>
+            <div style="font-size:.72rem;color:#6b7280">${recAtras.length} lançamento(s) · Fora da projeção</div>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <div style="text-align:right">
-            <div style="font-size:1.15rem;font-weight:900;color:#b45309">${fmt(totRecAtras)}</div>
-          </div>
-          <span id="icRecAtrasado" style="color:#9ca3af;font-size:1rem">▼</span>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:1.1rem;font-weight:900;color:#b45309">${fmtV(totRecAtras)}</div>
+          <span id="icRecAtrasado" style="color:#9ca3af;font-size:.9rem">▼</span>
         </div>
       </div>
-      <div id="recAtrasado" style="display:none;padding:10px 14px;flex-direction:column;gap:5px;max-height:300px;overflow-y:auto">
-        ${buildListaRec(recAtras,'#fffbeb','#fde68a','#b45309','#92400e')}
+      <div id="recAtrasado" style="display:none;padding:10px 14px;flex-direction:column;gap:5px;max-height:320px;overflow-y:auto">
+        ${buildListaRec(recAtras)}
       </div>
     </div>`;
   }
 
-  // Card: Contas Vencidas
-  if(pagAtras.length>0){
-    html+=`<div style="background:white;border:1px solid #fecaca;border-radius:14px;overflow:hidden;margin-bottom:14px">
-      <div onclick="toggleSecao('pagAtrasado')" style="padding:16px 20px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#fef2f2;user-select:none">
+  if(pagAtras.length){
+    html+=`<div style="background:white;border:1px solid #fecaca;border-radius:14px;overflow:hidden;margin-bottom:12px">
+      <div onclick="toggleSecao('pagAtrasado')" style="padding:15px 18px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:#fef2f2;user-select:none">
         <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-size:1.2rem">🔴</span>
+          <span style="font-size:1.1rem">🔴</span>
           <div>
             <div style="font-size:.85rem;font-weight:700;color:#dc2626">Contas Vencidas</div>
-            <div style="font-size:.72rem;color:#6b7280;margin-top:1px">${pagAtras.length} conta(s) · Fora da projeção</div>
+            <div style="font-size:.72rem;color:#6b7280">${pagAtras.length} conta(s) · Fora da projeção</div>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <div style="text-align:right">
-            <div style="font-size:1.15rem;font-weight:900;color:#dc2626">${fmt(totPagAtras)}</div>
-          </div>
-          <span id="icPagAtrasado" style="color:#9ca3af;font-size:1rem">▼</span>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:1.1rem;font-weight:900;color:#dc2626">${fmtV(totPagAtras)}</div>
+          <span id="icPagAtrasado" style="color:#9ca3af;font-size:.9rem">▼</span>
         </div>
       </div>
-      <div id="pagAtrasado" style="display:none;padding:10px 14px;flex-direction:column;gap:5px;max-height:300px;overflow-y:auto">
+      <div id="pagAtrasado" style="display:none;padding:10px 14px;flex-direction:column;gap:5px;max-height:320px;overflow-y:auto">
         ${buildListaPag(pagAtras)}
       </div>
     </div>`;
   }
 
-  // ALERTA
-  if(crit){
-    html+=`<div class="alerta danger">
-      <div class="alerta-icon">⚠️</div>
-      <div><div class="alerta-titulo">Caixa negativo previsto em ${fdW(crit.dt)}</div>
-      <div class="alerta-sub">Saldo projetado: <b style="color:#dc2626">${fmt(crit.saldo)}</b> — revise os pagamentos próximos a essa data.</div></div>
-    </div>`;
-  } else {
-    html+=`<div class="alerta success">
-      <div class="alerta-icon">✅</div>
-      <div><div class="alerta-titulo">Caixa positivo nos próximos 60 dias</div>
-      <div class="alerta-sub">Com base nos dados atuais, não há risco de saldo negativo.</div></div>
-    </div>`;
-  }
-
-  // KPIS
-  html+=`<div class="kpis-grid">
-    ${[{l:'📅 Em 7 dias',v:s7,d:fd(timeline[6].dt)},{l:'📅 Em 15 dias',v:s15,d:fd(timeline[14].dt)},{l:'📅 Em 30 dias',v:s30,d:fd(timeline[29].dt)},{l:'📅 Em 60 dias',v:s60,d:fd(timeline[59].dt)}]
-    .map(k=>`<div class="kpi-card ${k.v>=0?'pos':'neg'}">
-      <div class="kpi-label">${k.l}</div>
-      <div class="kpi-valor ${k.v>=0?'pos':'neg'}">${fmt(k.v)}</div>
-      <div class="kpi-data">${k.d}</div>
-    </div>`).join('')}
-  </div>`;
-
-  // GRÁFICO
-  html+=`<div class="grafico-wrap">
-    <div class="grafico-titulo">📈 Evolução do Saldo — 60 dias</div>
-    <canvas id="simChart" height="90"></canvas>
-  </div>`;
-
+  // ════════════════════════════
   // LANÇAMENTOS MANUAIS
-  html+=`<div class="secao">
+  // ════════════════════════════
+  html+=`<div class="secao" style="margin-bottom:18px">
     <div class="secao-header">
       <div><div class="secao-titulo">📌 Lançamentos Manuais</div>
-      <div class="secao-sub">Entradas e saídas fora do sistema principal</div></div>
+      <div class="secao-sub">Entradas e saídas fora do sistema</div></div>
       <button class="btn-header" style="background:#4f46e5;color:white;border-color:#4f46e5;font-size:.8rem" onclick="abrirModalManual()">+ Adicionar</button>
     </div>
     <div class="secao-body">`;
   if(!extras.length){
-    html+='<div class="empty-state">Nenhum lançamento manual. Clique em "+ Adicionar" para inserir.</div>';
+    html+='<div class="empty-state">Nenhum lançamento manual. Clique em "+ Adicionar".</div>';
   } else {
     extras.forEach((e,i)=>{
       const dt=new Date(e.data+'T12:00');
@@ -642,7 +799,7 @@ function render(){
           <div class="manual-data">${dt.toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'})} · ${e.tipo==='entrada'?'Entrada':'Saída'}</div>
         </div>
         <div style="display:flex;align-items:center">
-          <span class="manual-valor ${e.tipo}">${e.tipo==='entrada'?'+':'−'}${fmt(e.valor)}</span>
+          <span class="manual-valor ${e.tipo}">${e.tipo==='entrada'?'+':'−'}${fmtV(e.valor)}</span>
           <button class="manual-del" onclick="delManual(${i})">✕</button>
         </div>
       </div>`;
@@ -650,12 +807,44 @@ function render(){
   }
   html+='</div></div>';
 
+  // ════════════════════════════
+  // HISTÓRICO + EXPORTAR
+  // ════════════════════════════
+  const historico=SIM_carregar().historico||[];
+  html+=`<div class="secao" style="margin-bottom:18px">
+    <div class="secao-header">
+      <div><div class="secao-titulo">🗂 Histórico de Snapshots</div>
+      <div class="secao-sub">Salve o estado atual para comparar depois</div></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn-header" style="background:#059669;color:white;border-color:#059669;font-size:.8rem" onclick="salvarSnapshot()">📸 Salvar Snapshot</button>
+        <button class="btn-header" style="background:#7c3aed;color:white;border-color:#7c3aed;font-size:.8rem" onclick="exportarPDF()">📄 Exportar PDF</button>
+      </div>
+    </div>
+    <div class="secao-body">`;
+  if(!historico.length){
+    html+='<div class="empty-state">Nenhum snapshot salvo ainda.</div>';
+  } else {
+    historico.slice().reverse().forEach((h,i)=>{
+      const idx=historico.length-1-i;
+      html+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:11px 18px;border-bottom:1px solid #f1f5f9">
+        <div>
+          <div style="font-size:.85rem;font-weight:600;color:#374151">${h.label}</div>
+          <div style="font-size:.73rem;color:#9ca3af;margin-top:2px">${h.data} · Saldo: <b>${fmtV(h.saldo)}</b> · 60d: <b>${fmtV(h.s60)}</b></div>
+        </div>
+        <button onclick="delSnapshot(${idx})" style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;border-radius:6px;padding:4px 9px;font-size:.75rem;cursor:pointer">✕</button>
+      </div>`;
+    });
+  }
+  html+='</div></div>';
+
+  // ════════════════════════════
   // TIMELINE
+  // ════════════════════════════
   html+=`<div class="secao">
     <div class="secao-header">
       <div><div class="secao-titulo">📋 Previsão Dia a Dia</div>
-      <div class="secao-sub">Clique em um dia para ver os detalhes</div></div>
-      <div style="display:flex;gap:6px;font-size:.71rem">
+      <div class="secao-sub">Clique para expandir · 📝 para adicionar nota · 📅 para ajustar data</div></div>
+      <div style="display:flex;gap:5px;font-size:.71rem">
         <span class="tl-badge rec">● Entrada</span>
         <span class="tl-badge pag">● Saída</span>
         <span class="tl-badge man">● Manual</span>
@@ -663,58 +852,67 @@ function render(){
     </div>
     <div class="tl-scroll">`;
 
+  const notas=SIM_carregar().notas||{};
   const diasMov=timeline.filter((t,i)=>t.mov>0||i%7===6||i===0);
   diasMov.slice(0,50).forEach(t=>{
     const isHj=t.dt.toDateString()===hoje.toDateString();
+    const isSemCrit=t.dt>=semCritica.ini&&t.dt<=semCritica.fim;
     if(t.mov===0){
-      html+=`<div class="tl-marco">
-        <span>${fdW(t.dt)}</span>
-        <span style="font-weight:700;color:${t.saldo>=0?'#16a34a':'#dc2626'}">${fmt(t.saldo)}</span>
+      html+=`<div class="tl-marco" style="${isSemCrit?'background:#fff7f7;':''}">
+        <span style="font-size:.75rem;color:${isSemCrit?'#dc2626':'#9ca3af'};font-style:italic">${isSemCrit?'🔴 ':''} ${fdW(t.dt)}</span>
+        <span style="font-size:.78rem;font-weight:700;color:${t.saldo>=0?'#16a34a':'#dc2626'}">${fmtV(t.saldo)}</span>
       </div>`;
       return;
     }
     const uid='tl'+t.dt.getTime();
-    html+=`<div class="tl-dia${isHj?' tl-dia-hoje':''}">
+    html+=`<div class="tl-dia${isHj?' tl-dia-hoje':''}${isSemCrit?' tl-dia-critica':''}">
       <div class="tl-dia-header" onclick="toggleTl('${uid}')">
         <div>
-          <div class="tl-dia-nome${isHj?' hoje':''}">${isHj?'🔴 HOJE — ':''}${fdW(t.dt)}</div>
+          <div class="tl-dia-nome${isHj?' hoje':''}">
+            ${isHj?'🔴 HOJE — ':isSemCrit?'⚠️ ':''}${fdW(t.dt)}
+            ${isSemCrit?'<span style="font-size:.68rem;background:#fee2e2;color:#dc2626;padding:1px 6px;border-radius:4px;margin-left:4px">semana crítica</span>':''}
+          </div>
           <div class="tl-badges">
-            ${t.tR>0?`<span class="tl-badge rec">+${fmt(t.tR)}</span>`:''}
-            ${t.tP>0?`<span class="tl-badge pag">−${fmt(t.tP)}</span>`:''}
+            ${t.tR>0?`<span class="tl-badge rec">+${fmtV(t.tR)}</span>`:''}
+            ${t.tP>0?`<span class="tl-badge pag">−${fmtV(t.tP)}</span>`:''}
             ${t.eD.length?`<span class="tl-badge man">manual</span>`:''}
           </div>
         </div>
         <div class="tl-saldo">
           <div class="tl-saldo-label">saldo</div>
-          <div class="tl-saldo-valor ${t.saldo>=0?'pos':'neg'}">${fmt(t.saldo)}</div>
+          <div class="tl-saldo-valor ${t.saldo>=0?'pos':'neg'}">${fmtV(t.saldo)}</div>
         </div>
       </div>
       <div id="${uid}" class="tl-detalhe">`;
 
     t.rD.forEach(r=>{
       const uidR=r.uid||'';
-      html+=`<div class="tl-item rec" style="display:flex;justify-content:space-between;align-items:center">
-        <span class="tl-item-label">📥 ${r.label}${r.atrasado?'<span class="badge-atrasado">atrasado</span>':''}</span>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span class="tl-item-valor">+${fmt(r.valor)}</span>
-          <button onclick="abrirAjusteData('${uidR}','rec','${r.label.replace(/'/g,'')}',${r.valor},'${t.dt.toISOString().slice(0,10)}')" style="background:rgba(22,163,74,.12);border:none;border-radius:6px;padding:3px 8px;font-size:.72rem;cursor:pointer;color:#16a34a;font-weight:600" title="Ajustar data">📅 Ajustar</button>
+      const nota=notas[uidR]?`<span style="font-size:.7rem;color:#4f46e5;margin-left:4px">📝 ${notas[uidR]}</span>`:'';
+      html+=`<div class="tl-item rec" style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div><span class="tl-item-label">📥 ${r.label}</span>${nota}${r.ajustado?'<span style="font-size:.68rem;background:#e0e7ff;color:#4338ca;padding:1px 5px;border-radius:4px;margin-left:4px">ajustado</span>':''}</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <span class="tl-item-valor">+${fmtV(r.valor)}</span>
+          <button onclick="abrirAjusteData('${uidR}','rec','${r.label.replace(/'/g,'')}',${r.valor},'${t.dt.toISOString().slice(0,10)}')" style="background:rgba(22,163,74,.12);border:none;border-radius:5px;padding:2px 7px;font-size:.7rem;cursor:pointer;color:#16a34a;font-weight:600">📅</button>
+          ${uidR?`<button onclick="abrirNota('${uidR}','${r.label.replace(/'/g,'')}')" style="background:rgba(99,102,241,.1);border:none;border-radius:5px;padding:2px 7px;font-size:.7rem;cursor:pointer;color:#4f46e5;font-weight:600">📝</button>`:''}
         </div>
       </div>`;
     });
     t.pD.forEach(r=>{
       const uidP=r.uid||'';
-      html+=`<div class="tl-item pag" style="display:flex;justify-content:space-between;align-items:center">
-        <span class="tl-item-label">💳 ${r.label}${r.atrasado?'<span class="badge-atrasado">atrasado</span>':''}</span>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span class="tl-item-valor">−${fmt(r.valor)}</span>
-          <button onclick="abrirAjusteData('${uidP}','pag','${r.label.replace(/'/g,'')}',${r.valor},'${t.dt.toISOString().slice(0,10)}')" style="background:rgba(220,38,38,.1);border:none;border-radius:6px;padding:3px 8px;font-size:.72rem;cursor:pointer;color:#dc2626;font-weight:600" title="Ajustar data">📅 Ajustar</button>
+      const nota=notas[uidP]?`<span style="font-size:.7rem;color:#4f46e5;margin-left:4px">📝 ${notas[uidP]}</span>`:'';
+      html+=`<div class="tl-item pag" style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div><span class="tl-item-label">💳 ${r.label}</span>${nota}${r.ajustado?'<span style="font-size:.68rem;background:#e0e7ff;color:#4338ca;padding:1px 5px;border-radius:4px;margin-left:4px">ajustado</span>':''}</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <span class="tl-item-valor">−${fmtV(r.valor)}</span>
+          <button onclick="abrirAjusteData('${uidP}','pag','${r.label.replace(/'/g,'')}',${r.valor},'${t.dt.toISOString().slice(0,10)}')" style="background:rgba(220,38,38,.1);border:none;border-radius:5px;padding:2px 7px;font-size:.7rem;cursor:pointer;color:#dc2626;font-weight:600">📅</button>
+          ${uidP?`<button onclick="abrirNota('${uidP}','${r.label.replace(/'/g,'')}')" style="background:rgba(99,102,241,.1);border:none;border-radius:5px;padding:2px 7px;font-size:.7rem;cursor:pointer;color:#4f46e5;font-weight:600">📝</button>`:''}
         </div>
       </div>`;
     });
     t.eD.forEach(e=>{
-      html+=`<div class="tl-item man">
+      html+=`<div class="tl-item man" style="display:flex;justify-content:space-between;align-items:center">
         <span class="tl-item-label">📌 ${e.descricao||'Manual'}</span>
-        <span class="tl-item-valor">${e.tipo==='entrada'?'+':'−'}${fmt(e.valor)}</span>
+        <span class="tl-item-valor">${e.tipo==='entrada'?'+':'−'}${fmtV(e.valor)}</span>
       </div>`;
     });
 
@@ -723,38 +921,61 @@ function render(){
 
   html+=`</div></div>`;
 
+  // ── Monta DOM ──
   document.getElementById('mainContent').innerHTML=html;
 
-  // Renderiza gráfico
+  // ── Gráfico linha ──
   const step=Math.max(1,Math.floor(60/15));
   const gl=timeline.filter((_,i)=>i%step===0||i===59).map(t=>fd(t.dt));
-  const gd=timeline.filter((_,i)=>i%step===0||i===59).map(t=>t.saldo);
-  const gc=document.getElementById('simChart');
-  if(gc){
-    new Chart(gc,{
-      type:'line',
-      data:{labels:gl,datasets:[{
-        label:'Saldo',data:gd,
-        segment:{borderColor:ctx=>ctx.p1.parsed.y>=0?'#22c55e':'#ef4444'},
-        backgroundColor:'rgba(99,102,241,.05)',
-        tension:.4,fill:true,pointRadius:3,
-        pointBackgroundColor:gd.map(v=>v>=0?'#22c55e':'#ef4444'),
-        borderWidth:2.5
-      }]},
+  const gdS=timeline.filter((_,i)=>i%step===0||i===59).map(t=>t.saldo);
+  const gdM=metaMinima>0?gdS.map(()=>metaMinima):null;
+  const gcL=document.getElementById('simChartLinha');
+  if(gcL){
+    const datasets=[{
+      label:'Saldo',data:gdS,
+      segment:{borderColor:ctx=>ctx.p1.parsed.y>=0?'#22c55e':'#ef4444'},
+      backgroundColor:'rgba(99,102,241,.05)',
+      tension:.4,fill:true,pointRadius:2,
+      pointBackgroundColor:gdS.map(v=>v>=0?'#22c55e':'#ef4444'),borderWidth:2.5
+    }];
+    if(gdM)datasets.push({label:'Meta mínima',data:gdM,borderColor:'#f97316',borderDash:[6,3],borderWidth:1.5,pointRadius:0,fill:false});
+    new Chart(gcL,{type:'line',data:{labels:gl,datasets},options:{plugins:{legend:{display:!!gdM,position:'bottom',labels:{boxWidth:12,font:{size:11}}},tooltip:{callbacks:{label:c=>c.dataset.label+': '+fmtV(c.raw)}}},scales:{y:{ticks:{callback:v=>'R$'+Math.round(v/1000)+'k',color:'#6b7280',font:{size:11}},grid:{color:'#f1f5f9'}},x:{ticks:{color:'#6b7280',maxTicksLimit:10,font:{size:11}},grid:{display:false}}}}});
+  }
+
+  // ── Gráfico barras semanais ──
+  const gcB=document.getElementById('simChartBarras');
+  if(gcB){
+    const semCritIdx=semanas.indexOf(semCritica);
+    const bgEntradas=semanas.map(()=>'rgba(34,197,94,.75)');
+    const bgSaidas  =semanas.map((_,i)=>i===semCritIdx?'rgba(239,68,68,.9)':'rgba(239,68,68,.65)');
+    new Chart(gcB,{
+      type:'bar',
+      data:{
+        labels:semanas.map(s=>s.ini.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})),
+        datasets:[
+          {label:'Entradas',data:semanas.map(s=>s.entradas),backgroundColor:bgEntradas,borderRadius:6,borderSkipped:false},
+          {label:'Saídas',  data:semanas.map(s=>s.saidas),  backgroundColor:bgSaidas,  borderRadius:6,borderSkipped:false}
+        ]
+      },
       options:{
-        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>'Saldo: '+fmt(c.raw)}}},
+        plugins:{
+          legend:{display:false},
+          tooltip:{callbacks:{
+            title:ctx=>'Semana de '+semanas[ctx[0].dataIndex].ini.toLocaleDateString('pt-BR',{day:'2-digit',month:'short'}),
+            label:c=>(c.dataset.label)+': '+fmtV(c.raw),
+            afterBody:ctx=>'Saldo ao fim: '+fmtV(semanas[ctx[0].dataIndex].saldoFim)
+          }}
+        },
         scales:{
-          y:{ticks:{callback:v=>'R$'+Math.round(v/1000)+'k',color:'#6b7280',font:{size:11}},grid:{color:'#f1f5f9'}},
-          x:{ticks:{color:'#6b7280',maxTicksLimit:10,font:{size:11}},grid:{display:false}}
+          y:{ticks:{callback:v=>'R$'+Math.round(v/1000)+'k',color:'#6b7280',font:{size:11}},grid:{color:'#f1f5f9'},stacked:false},
+          x:{ticks:{color:'#6b7280',font:{size:11}},grid:{display:false}}
         }
       }
     });
   }
 }
 
-// ══════════════════════════════════════════════════
-// INTERAÇÕES
-// ══════════════════════════════════════════════════
+
 function toggleSecao(id){
   const el=document.getElementById(id);
   const ic=document.getElementById('ic'+id[0].toUpperCase()+id.slice(1));
