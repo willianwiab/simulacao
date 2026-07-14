@@ -327,6 +327,7 @@ function fromFV(fv){
 // ══════════════════════════════════════════════════
 let _receber = [];  // registros com saldo > 0
 let _pagar   = [];  // contas pendentes com dia
+let _ultimoCalculo = {}; // último saldoBanco/s60 calculados por render(), usado pelo Snapshot
 
 const MABS = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MN   = {JAN:1,FEV:2,MAR:3,ABR:4,MAI:5,JUN:6,JUL:7,AGO:8,SET:9,OUT:10,NOV:11,DEZ:12};
@@ -439,14 +440,28 @@ function render(){
     return null;
   }
 
-  // ── Recebíveis ──
+  // ── Ajustes locais de data (também usado pelo cenário "e se" em atrasados) ──
+  const ajustes=SIM_getAjustes();
+  function comAjuste(uid,dtOriginal){
+    if(uid&&ajustes[uid]){
+      const p=ajustes[uid].split('-');
+      const d=new Date(+p[0],+p[1]-1,+p[2]);d.setHours(0,0,0,0);
+      return {dt:d,ajustado:true};
+    }
+    return {dt:dtOriginal,ajustado:false};
+  }
+
+  // ── Recebíveis ── (aplica ajuste ANTES de decidir se é futuro ou atrasado — é isso que permite o cenário "e se")
   const recFut=[],recAtras=[];
   _receber.forEach(r=>{
     const s=+(r.saldo||0);if(s<=0)return;
     const venc=(r.vencimento&&r.vencimento!=='-')?r.vencimento:r.data;
-    const dt=parseDt(venc,r.mes);if(!dt)return;
-    if(dt<hoje) recAtras.push({dt,valor:s,label:r.cliente,atrasado:true,uid:r.id,tipo:'rec'});
-    else         recFut.push({dt,valor:s,label:r.cliente,atrasado:false,uid:r.id,tipo:'rec'});
+    const dtOriginal=parseDt(venc,r.mes);if(!dtOriginal)return;
+    const eraAtrasado=dtOriginal<hoje;
+    const{dt,ajustado}=comAjuste(r.id,dtOriginal);
+    const item={dt,valor:s,label:r.cliente,atrasado:eraAtrasado,ajustado,uid:r.id,tipo:'rec'};
+    if(dt<hoje) recAtras.push(item);
+    else         recFut.push(item);
   });
   const totRecAtras=recAtras.reduce((a,r)=>a+r.valor,0);
 
@@ -455,17 +470,27 @@ function render(){
   _pagar.forEach(c=>{
     if(c.status?.toUpperCase()==='PAGO'||!c.dia)return;
     const[ma,as]=(c.mes||'').split('/');const mn=MN[ma];const ano=+as;if(!mn||!ano)return;
-    const dt=new Date(ano,mn-1,c.dia);dt.setHours(0,0,0,0);
-    if(dt<hoje) pagAtras.push({dt,valor:c.valor,label:c.nome,categoria:c.categoria,atrasado:true,uid:c.id,mes:c.mes,tipo:'pag'});
-    else         pagFut.push({dt,valor:c.valor,label:c.nome,categoria:c.categoria,atrasado:false,uid:c.id,mes:c.mes,tipo:'pag'});
+    const dtOriginal=new Date(ano,mn-1,c.dia);dtOriginal.setHours(0,0,0,0);
+    const eraAtrasado=dtOriginal<hoje;
+    const{dt,ajustado}=comAjuste(c.id,dtOriginal);
+    const item={dt,valor:c.valor,label:c.nome,categoria:c.categoria,atrasado:eraAtrasado,ajustado,uid:c.id,mes:c.mes,tipo:'pag'};
+    if(dt<hoje) pagAtras.push(item);
+    else         pagFut.push(item);
   });
   const totPagAtras=pagAtras.reduce((a,r)=>a+r.valor,0);
 
-  // ── Ajustes locais ──
-  const recFutAj=aplicarAjustesLocais(recFut);
-  const pagFutAj=aplicarAjustesLocais(pagFut);
-  recFut.length=0;recFutAj.forEach(x=>recFut.push(x));
-  pagFut.length=0;pagFutAj.forEach(x=>pagFut.push(x));
+  // ── Cenário: cortar categoria de despesa da simulação ──
+  // catTotaisFuturo mostra só o que cai dentro da janela de 60 dias (mesma janela do gráfico/KPIs) —
+  // pagFut sozinho tem TODOS os meses futuros do Firebase, não só os próximos 60 dias, então somar
+  // pagFut inteiro dava um total maior do que o corte realmente tira do saldo projetado de 60 dias.
+  const CATS_SIM={consumo:{label:'Consumo',icon:'⚡'},servicos:{label:'Serviços',icon:'🔧'},impostos:{label:'Impostos',icon:'📋'},pessoal:{label:'Pessoal',icon:'👤'},aluguel:{label:'Aluguel',icon:'🏠'},cartoes:{label:'Cartões',icon:'💳'},marketing:{label:'Marketing',icon:'📣'},contabilidade:{label:'Contab.',icon:'📊'},retirada:{label:'Retiradas',icon:'💰'},outros:{label:'Outros',icon:'📦'}};
+  const limite60=new Date(hoje);limite60.setDate(hoje.getDate()+59);
+  const catTotaisFuturo={};
+  let totPagFuturo60=0;
+  pagFut.forEach(r=>{if(r.dt>limite60)return;const k=r.categoria||'outros';catTotaisFuturo[k]=(catTotaisFuturo[k]||0)+r.valor;totPagFuturo60+=r.valor;});
+  const categoriasExcluidas=sim.categoriasExcluidas||[];
+  const pagFutCortado=pagFut.filter(r=>!categoriasExcluidas.includes(r.categoria||'outros'));
+  pagFut.length=0;pagFutCortado.forEach(x=>pagFut.push(x));
 
   // ── Extras manuais ──
   const extrasV=extras.filter(e=>e.data&&e.valor);
@@ -494,6 +519,7 @@ function render(){
   const s60=timeline[59]?.saldo||saldoBanco;
   const crit=timeline.find(t=>t.saldo<0);
   const critMeta=metaMinima>0?timeline.find(t=>t.saldo<metaMinima):null;
+  _ultimoCalculo={saldoBanco,s60};
 
   // ── RUNWAY (dias sem receita nova) ──
   let saldoR=saldoBanco,runwayDias=0;
@@ -640,6 +666,31 @@ function render(){
   </div>`;
 
   // ════════════════════════════
+  // CENÁRIO: CORTAR CATEGORIA
+  // ════════════════════════════
+  const catEntries=Object.entries(catTotaisFuturo).sort((a,b)=>b[1]-a[1]);
+  const economiaCorte=categoriasExcluidas.reduce((a,c)=>a+(catTotaisFuturo[c]||0),0);
+  html+=`<div class="secao" style="margin-bottom:18px">
+    <div class="secao-header">
+      <div><div class="secao-titulo">🧪 Cenário — Cortar Categoria de Despesa</div>
+      <div class="secao-sub">Valores abaixo = só o que vence nos próximos 60 dias. O corte também remove o resto da categoria (além dos 60 dias) do cálculo de runway.</div></div>
+    </div>
+    <div class="secao-body" style="padding:14px 20px;display:flex;flex-direction:column;gap:8px">
+      ${catEntries.length?catEntries.map(([cat,val])=>{
+        const info=CATS_SIM[cat]||{label:cat,icon:'📦'};
+        const marcado=categoriasExcluidas.includes(cat);
+        return `<label style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:${marcado?'#fef2f2':'#f8fafc'};border:1px solid ${marcado?'#fecaca':'#e5e7eb'};border-radius:9px;cursor:pointer">
+          <input type="checkbox" ${marcado?'checked':''} onchange="toggleCategoriaCorte('${cat}')" style="width:16px;height:16px;cursor:pointer"/>
+          <span style="font-size:1rem">${info.icon}</span>
+          <span style="flex:1;font-size:.85rem;font-weight:600;color:#374151">${info.label}${marcado?' <span style="font-size:.7rem;color:#dc2626;font-weight:700">(cortado da simulação)</span>':''}</span>
+          <span style="font-size:.88rem;font-weight:700;color:${marcado?'#dc2626':'#374151'}">${fmtV(val)}<span style="font-weight:400;color:#9ca3af"> /60d</span></span>
+        </label>`;
+      }).join(''):'<div class="empty-state">Nenhuma conta futura categorizada nos próximos 60 dias.</div>'}
+      ${categoriasExcluidas.length?`<div style="margin-top:6px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:9px;font-size:.8rem;color:#1e40af">💡 Simulando sem <b>${categoriasExcluidas.length}</b> categoria(s) — economia de <b>${fmtV(economiaCorte)}</b> nos próximos 60 dias (já refletido nos KPIs e gráficos abaixo). O runway também considera o corte além dos 60 dias.</div>`:''}
+    </div>
+  </div>`;
+
+  // ════════════════════════════
   // KPIs 4 blocos
   // ════════════════════════════
   html+=`<div class="kpis-grid">
@@ -690,29 +741,37 @@ function render(){
   // ════════════════════════════
   function buildListaRec(lista){
     const notas=SIM_carregar().notas||{};
-    return lista.map(r=>`<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 12px;background:#f0fdf4;border-radius:8px;gap:8px">
+    return lista.map(r=>{
+      const labelEsc=r.label.replace(/'/g,'');
+      return `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 12px;background:#f0fdf4;border-radius:8px;gap:8px">
       <div style="flex:1;min-width:0">
         <div style="font-size:.82rem;font-weight:600;color:#374151">👤 ${r.label}</div>
-        <div style="font-size:.72rem;color:#9ca3af;margin-top:2px">${fd(r.dt)}${notas[r.uid]?` · 📝 ${notas[r.uid]}`:''}${r.atrasado?' <span style="background:#fef3c7;color:#92400e;font-size:.68rem;padding:1px 5px;border-radius:4px">atrasado</span>':''}</div>
+        <div style="font-size:.72rem;color:#9ca3af;margin-top:2px">${fd(r.dt)}${notas[r.uid]?` · 📝 ${notas[r.uid]}`:''}${r.atrasado?' <span style="background:#fef3c7;color:#92400e;font-size:.68rem;padding:1px 5px;border-radius:4px">atrasado</span>':''}${r.ajustado?' <span style="background:#e0e7ff;color:#4338ca;font-size:.68rem;padding:1px 5px;border-radius:4px">🔮 cenário simulado</span>':''}</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <b style="color:#16a34a">${fmtV(r.valor)}</b>
-        ${r.uid?`<button onclick="abrirNota('${r.uid}','${r.label.replace(/'/g,'')}')" style="background:rgba(99,102,241,.1);border:none;border-radius:5px;padding:2px 6px;font-size:.7rem;cursor:pointer;color:#4f46e5" title="Adicionar nota">📝</button>`:''}
+        ${r.uid?`<button onclick="abrirAjusteData('${r.uid}','rec','${labelEsc}',${r.valor},'${r.dt.toISOString().slice(0,10)}')" style="background:rgba(79,70,229,.1);border:none;border-radius:5px;padding:2px 6px;font-size:.7rem;cursor:pointer;color:#4f46e5" title="Simular data de recebimento (cenário e se)">📅</button>`:''}
+        ${r.uid?`<button onclick="abrirNota('${r.uid}','${labelEsc}')" style="background:rgba(99,102,241,.1);border:none;border-radius:5px;padding:2px 6px;font-size:.7rem;cursor:pointer;color:#4f46e5" title="Adicionar nota">📝</button>`:''}
       </div>
-    </div>`).join('');
+    </div>`;
+    }).join('');
   }
   function buildListaPag(lista){
     const notas=SIM_carregar().notas||{};
-    return lista.map(r=>`<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 12px;background:#fef2f2;border-radius:8px;gap:8px">
+    return lista.map(r=>{
+      const labelEsc=r.label.replace(/'/g,'');
+      return `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 12px;background:#fef2f2;border-radius:8px;gap:8px">
       <div style="flex:1;min-width:0">
         <div style="font-size:.82rem;font-weight:600;color:#374151">💳 ${r.label}</div>
-        <div style="font-size:.72rem;color:#9ca3af;margin-top:2px">${fd(r.dt)} · ${r.mes||''}${notas[r.uid]?` · 📝 ${notas[r.uid]}`:''}${r.atrasado?' <span style="background:#fee2e2;color:#dc2626;font-size:.68rem;padding:1px 5px;border-radius:4px">atrasado</span>':''}</div>
+        <div style="font-size:.72rem;color:#9ca3af;margin-top:2px">${fd(r.dt)} · ${r.mes||''}${notas[r.uid]?` · 📝 ${notas[r.uid]}`:''}${r.atrasado?' <span style="background:#fee2e2;color:#dc2626;font-size:.68rem;padding:1px 5px;border-radius:4px">atrasado</span>':''}${r.ajustado?' <span style="background:#e0e7ff;color:#4338ca;font-size:.68rem;padding:1px 5px;border-radius:4px">🔮 cenário simulado</span>':''}</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <b style="color:#dc2626">${fmtV(r.valor)}</b>
-        ${r.uid?`<button onclick="abrirNota('${r.uid}','${r.label.replace(/'/g,'')}')" style="background:rgba(99,102,241,.1);border:none;border-radius:5px;padding:2px 6px;font-size:.7rem;cursor:pointer;color:#4f46e5" title="Adicionar nota">📝</button>`:''}
+        ${r.uid?`<button onclick="abrirAjusteData('${r.uid}','pag','${labelEsc}',${r.valor},'${r.dt.toISOString().slice(0,10)}')" style="background:rgba(220,38,38,.1);border:none;border-radius:5px;padding:2px 6px;font-size:.7rem;cursor:pointer;color:#dc2626" title="Simular data de pagamento (cenário e se)">📅</button>`:''}
+        ${r.uid?`<button onclick="abrirNota('${r.uid}','${labelEsc}')" style="background:rgba(99,102,241,.1);border:none;border-radius:5px;padding:2px 6px;font-size:.7rem;cursor:pointer;color:#4f46e5" title="Adicionar nota">📝</button>`:''}
       </div>
-    </div>`).join('');
+    </div>`;
+    }).join('');
   }
 
   // Card a receber futuro
@@ -1039,20 +1098,6 @@ function confirmarAjuste(){
   toast('✅ Vencimento ajustado para '+dt,'#4f46e5');
 }
 
-// Aplica ajustes locais ao montar recFut e pagFut
-function aplicarAjustesLocais(lista){
-  const aj = SIM_getAjustes();
-  return lista.map(item=>{
-    if(item.uid && aj[item.uid]){
-      const p = aj[item.uid].split('-');
-      const novaDt = new Date(+p[0],+p[1]-1,+p[2]);
-      novaDt.setHours(0,0,0,0);
-      return {...item, dt:novaDt, ajustado:true};
-    }
-    return item;
-  });
-}
-
 function toggleTl(uid){
   const el=document.getElementById(uid);
   if(!el)return;
@@ -1063,7 +1108,6 @@ function toggleTl(uid){
 function abrirModalSaldo(){
   const sim=SIM_carregar();
   document.getElementById('inputBanco').value=sim.saldoBanco??0;
-  document.getElementById('inputCaixa').value=sim.saldoCaixa??0;
   document.getElementById('modalSaldoBg').classList.add('open');
 }
 function fecharModalSaldo(){document.getElementById('modalSaldoBg').classList.remove('open');}
@@ -1080,6 +1124,60 @@ function editarSaldo(campo){
   if(isNaN(val)){toast('Valor inválido','#ef4444');return;}
   sim[campo]=val;SIM_salvar(sim);render();toast('✅ Saldo atualizado!');
 }
+
+// Meta mínima de caixa
+function abrirMetaMinima(){
+  const sim=SIM_carregar();
+  const v=prompt('🎯 Meta mínima de caixa (R$) — abaixo disso o app avisa:',sim.metaMinima??0);
+  if(v===null)return;
+  const val=parseFloat(v.replace(',','.').replace(/[^\d.-]/g,''));
+  if(isNaN(val)||val<0){toast('Valor inválido','#ef4444');return;}
+  sim.metaMinima=val;SIM_salvar(sim);render();toast('✅ Meta mínima atualizada!');
+}
+
+// Notas por lançamento
+function abrirNota(uid,nome){
+  const sim=SIM_carregar();
+  if(!sim.notas)sim.notas={};
+  const v=prompt('📝 Nota para "'+nome+'":',sim.notas[uid]||'');
+  if(v===null)return;
+  if(v.trim()==='')delete sim.notas[uid];else sim.notas[uid]=v.trim();
+  SIM_salvar(sim);render();toast('✅ Nota salva!','#4f46e5');
+}
+
+// Cenário: cortar categoria de despesa
+function toggleCategoriaCorte(cat){
+  const sim=SIM_carregar();
+  if(!sim.categoriasExcluidas)sim.categoriasExcluidas=[];
+  const i=sim.categoriasExcluidas.indexOf(cat);
+  if(i>=0)sim.categoriasExcluidas.splice(i,1);else sim.categoriasExcluidas.push(cat);
+  SIM_salvar(sim);render();
+  toast(i>=0?'✅ Categoria incluída de novo na simulação':'✂️ Categoria cortada da simulação!','#4f46e5');
+}
+
+// Snapshots
+function salvarSnapshot(){
+  const nome=prompt('📸 Nome para este snapshot:',new Date().toLocaleDateString('pt-BR'));
+  if(nome===null)return;
+  const sim=SIM_carregar();
+  if(!sim.historico)sim.historico=[];
+  sim.historico.push({
+    label:(nome.trim()||'Snapshot'),
+    data:new Date().toLocaleDateString('pt-BR')+' '+new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}),
+    saldo:_ultimoCalculo.saldoBanco??0,
+    s60:_ultimoCalculo.s60??0
+  });
+  SIM_salvar(sim);render();toast('📸 Snapshot salvo!','#059669');
+}
+function delSnapshot(idx){
+  if(!confirm('Remover este snapshot?'))return;
+  const sim=SIM_carregar();
+  sim.historico.splice(idx,1);
+  SIM_salvar(sim);render();toast('🗑️ Snapshot removido','#6b7280');
+}
+
+// Exportar PDF — usa a folha de estilo @media print já configurada
+function exportarPDF(){ window.print(); }
 
 // Manuais
 function abrirModalManual(){
